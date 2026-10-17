@@ -17,6 +17,13 @@ string toString(const Expr& expr)
 		return expr.name;
 	case Expr::UNARY:
 		return "(" + expr.name + " " + toString(*expr.left) + ")";
+	case Expr::CALL:
+	{
+		string text = "(call " + expr.name;
+		for (size_t i = 0; i < expr.arguments.size(); i++)
+			text += " " + toString(*expr.arguments[i]);
+		return text + ")";
+	}
 	default:
 		return "(" + expr.name + " " + toString(*expr.left) + " " + toString(*expr.right) + ")";
 	}

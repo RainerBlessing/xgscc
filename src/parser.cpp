@@ -8,10 +8,10 @@ namespace
 {
 	const char* const ASSIGNMENTS[] = { "=", "+=", "-=", "&=", "|=", "^=", "<<=", ">>=" };
 	const char* const LATER_ASSIGNMENTS[] = { "*=", "/=", "%=" };
-	const char* const LATER_STATEMENTS[] = { "do", "switch", "break", "continue", "return", "goto", "case", "default" };
+	const char* const LATER_STATEMENTS[] = { "switch", "goto", "case", "default" };
 	const char* const OTHER_TYPES[] = {
-		"int", "char", "short", "long", "signed", "float", "double", "const", "static", "volatile",
-		"uint16_t", "int8_t", "int16_t", "uint32_t", "int32_t", "void", "struct", "enum"
+		"int", "char", "short", "long", "signed", "float", "double", "volatile",
+		"uint16_t", "int8_t", "int16_t", "uint32_t", "int32_t", "struct", "enum"
 	};
 
 	template <size_t N>
@@ -110,18 +110,48 @@ namespace
 		bool isTypeStart() const
 		{
 			return peek().type == Token::IDENT &&
-				(peek().text == "uint8_t" || peek().text == "unsigned" || contains(OTHER_TYPES, peek().text));
+				(peek().text == "uint8_t" || peek().text == "unsigned" || peek().text == "void" ||
+				 peek().text == "static" || peek().text == "const" || contains(OTHER_TYPES, peek().text));
 		}
 
-		void type()
+		struct Specifiers
 		{
+			Specifiers() : isStatic(false), isConst(false), isVoid(false) {}
+			bool isStatic;
+			bool isConst;
+			bool isVoid;
+		};
+
+		// [static] [const] type, in any order of the qualifiers
+		Specifiers specifiers()
+		{
+			Specifiers result;
+			for (;;)
+			{
+				if (isWord("static") || isWord("const"))
+				{
+					bool& flag = isWord("static") ? result.isStatic : result.isConst;
+					if (flag)
+						throw CompileError(peek().line, "'" + peek().text + "' is written twice");
+					flag = true;
+					take();
+				}
+				else
+					break;
+			}
+			if (isWord("void"))
+			{
+				take();
+				result.isVoid = true;
+				return result;
+			}
 			Token token = take();
 			if (token.text == "uint8_t")
-				return;
+				return result;
 			if (token.text == "unsigned" && isWord("char"))
 			{
 				take();
-				return;
+				return result;
 			}
 			throw CompileError(token.line, "type '" + token.text + "' is not supported yet, use uint8_t");
 		}
@@ -130,39 +160,65 @@ namespace
 
 		void topLevel(Program* result)
 		{
-			if (isWord("void"))
-			{
-				result->functions.push_back(function());
-				return;
-			}
 			if (!isTypeStart())
 				throw CompileError(peek().line, "unexpected " + describe(peek()) + ", expected a declaration or a function");
 			int line = peek().line;
-			type();
+			Specifiers type = specifiers();
 			if (peek(1).type == Token::OPERATOR && peek(1).text == "(")
-				throw CompileError(line, "function " + peek().text + " must return void, other types are not supported yet");
-			result->globals.push_back(declarationAfterType(line));
+			{
+				Function function = functionAfterType(type);
+				(function.body ? result->functions : result->prototypes).push_back(std::move(function));
+				return;
+			}
+			if (type.isVoid)
+				throw CompileError(line, "a variable cannot be void");
+			result->globals.push_back(declarationAfterType(line, type));
 		}
 
-		Function function()
+		// name ( parameters ) { body }   or   name ( parameters ) ;
+		Function functionAfterType(const Specifiers& type)
 		{
 			Function result;
-			result.line = take().line;		// void
+			result.line = peek().line;
+			result.returnsValue = !type.isVoid;
 			result.name = expectName();
 			expectOperator("(");
-			if (isWord("void"))
+			if (isWord("void") && isOperator(")", 1))
 				take();
-			if (!isOperator(")"))
-				throw CompileError(peek().line, "parameters are not supported yet");
-			take();
+			else if (!isOperator(")"))
+			{
+				for (;;)
+				{
+					Parameter parameter;
+					parameter.line = peek().line;
+					Specifiers parameterType = specifiers();
+					if (parameterType.isVoid)
+						throw CompileError(parameter.line, "a parameter cannot be void");
+					parameter.name = expectName();
+					result.parameters.push_back(parameter);
+					if (!isOperator(","))
+						break;
+					take();
+				}
+			}
+			expectOperator(")");
+			if (isOperator(";"))
+			{
+				take();
+				return result;
+			}
 			result.body = block();
 			return result;
 		}
 
 		// name [= expression] ; with the type already read
-		StmtPtr declarationAfterType(int line, bool endsWithSemicolon = true)
+		StmtPtr declarationAfterType(int line, const Specifiers& type, bool endsWithSemicolon = true)
 		{
+			if (type.isVoid)
+				throw CompileError(line, "a variable cannot be void");
 			StmtPtr declaration(new Stmt(Stmt::DECLARATION, line));
+			declaration->isStatic = type.isStatic;
+			declaration->isConst = type.isConst;
 			declaration->name = expectName();
 			if (isOperator("="))
 			{
@@ -202,8 +258,8 @@ namespace
 				return block();
 			if (isTypeStart())
 			{
-				type();
-				return declarationAfterType(line);
+				Specifiers type = specifiers();
+				return declarationAfterType(line, type);
 			}
 			if (peek().type == Token::IDENT)
 			{
@@ -213,6 +269,17 @@ namespace
 					return whileStatement();
 				if (peek().text == "for")
 					return forStatement();
+				if (peek().text == "do")
+					return doStatement();
+				if (peek().text == "return")
+					return returnStatement();
+				if (peek().text == "break" || peek().text == "continue")
+				{
+					StmtPtr jump(new Stmt(peek().text == "break" ? Stmt::BREAK : Stmt::CONTINUE, line));
+					take();
+					expectOperator(";");
+					return jump;
+				}
 				if (contains(LATER_STATEMENTS, peek().text))
 					throw CompileError(line, "'" + peek().text + "' is not supported yet");
 			}
@@ -246,6 +313,29 @@ namespace
 			return result;
 		}
 
+		StmtPtr doStatement()
+		{
+			StmtPtr result(new Stmt(Stmt::DO_WHILE, take().line));
+			result->body = statement();
+			if (!isWord("while"))
+				throw unexpected("'while' after the body of do");
+			take();
+			expectOperator("(");
+			result->expr = expression();
+			expectOperator(")");
+			expectOperator(";");
+			return result;
+		}
+
+		StmtPtr returnStatement()
+		{
+			StmtPtr result(new Stmt(Stmt::RETURN, take().line));
+			if (!isOperator(";"))
+				result->expr = expression();
+			expectOperator(";");
+			return result;
+		}
+
 		StmtPtr forStatement()
 		{
 			StmtPtr result(new Stmt(Stmt::FOR, take().line));
@@ -253,8 +343,8 @@ namespace
 			if (isTypeStart())
 			{
 				int line = peek().line;
-				type();
-				result->init = declarationAfterType(line, false);
+				Specifiers type = specifiers();
+				result->init = declarationAfterType(line, type, false);
 			}
 			else if (!isOperator(";"))
 				result->init = simpleStatement();
@@ -282,6 +372,12 @@ namespace
 			}
 			if (peek().type != Token::IDENT)
 				throw CompileError(line, "expected a statement, found " + describe(peek()));
+			if (isOperator("(", 1))
+			{
+				StmtPtr result(new Stmt(Stmt::CALL, line));
+				result->expr = call();
+				return result;
+			}
 			string name = take().text;
 			if (isOperator("++") || isOperator("--"))
 			{
@@ -354,6 +450,26 @@ namespace
 			return primary();
 		}
 
+		// name ( arguments )
+		ExprPtr call()
+		{
+			ExprPtr node(new Expr(Expr::CALL, peek().line));
+			node->name = take().text;
+			expectOperator("(");
+			if (!isOperator(")"))
+			{
+				for (;;)
+				{
+					node->arguments.push_back(expression());
+					if (!isOperator(","))
+						break;
+					take();
+				}
+			}
+			expectOperator(")");
+			return node;
+		}
+
 		ExprPtr primary()
 		{
 			const Token& token = peek();
@@ -366,7 +482,7 @@ namespace
 			if (token.type == Token::IDENT)
 			{
 				if (isOperator("(", 1))
-					throw CompileError(token.line, "function calls are not supported yet");
+					return call();
 				ExprPtr node(new Expr(Expr::VARIABLE, token.line));
 				node->name = take().text;
 				return node;

@@ -238,21 +238,11 @@ TEST(ParserTest, OtherTypesAreNotSupportedYet) {
 }
 
 TEST(ParserTest, StatementsOfLaterStagesAreNotSupportedYet) {
-    for (const char* keyword : { "do", "switch", "break", "continue", "return", "goto" }) {
+    for (const char* keyword : { "switch", "goto", "case", "default" }) {
         CompileError error = errorOf(inMain(std::string(keyword) + " ;"));
         EXPECT_EQ(2, error.line);
         EXPECT_NE(std::string::npos, error.message.find(keyword)) << error.message;
     }
-}
-
-TEST(ParserTest, FunctionsWithParametersAreNotSupportedYet) {
-    CompileError error = errorOf("void f(uint8_t x) { }");
-    EXPECT_NE(std::string::npos, error.message.find("parameter")) << error.message;
-}
-
-TEST(ParserTest, FunctionsMustReturnVoid) {
-    CompileError error = errorOf("uint8_t f(void) { }");
-    EXPECT_EQ(1, error.line);
 }
 
 TEST(ParserTest, GarbageAtTheTopLevelIsAnError) {
@@ -263,4 +253,141 @@ TEST(ParserTest, GarbageAtTheTopLevelIsAnError) {
 TEST(ParserTest, CompoundAssignmentOfLaterStagesIsNotSupportedYet) {
     CompileError error = errorOf(inMain("a *= 2;"));
     EXPECT_NE(std::string::npos, error.message.find("*=")) << error.message;
+}
+
+// functions
+
+TEST(ParserTest, FunctionWithParametersAndAReturnValue) {
+    Program program = parseSource("uint8_t add(uint8_t a, uint8_t b) { return a + b; } void main(void) { }");
+    ASSERT_EQ(2u, program.functions.size());
+    const Function& add = program.functions[0];
+    EXPECT_EQ("add", add.name);
+    EXPECT_TRUE(add.returnsValue);
+    ASSERT_EQ(2u, add.parameters.size());
+    EXPECT_EQ("a", add.parameters[0].name);
+    EXPECT_EQ("b", add.parameters[1].name);
+    EXPECT_FALSE(program.functions[1].returnsValue);
+}
+
+TEST(ParserTest, VoidParameterListMeansNoParameters) {
+    Program program = parseSource("void f(void) { } void g() { }");
+    EXPECT_TRUE(program.functions[0].parameters.empty());
+    EXPECT_TRUE(program.functions[1].parameters.empty());
+}
+
+TEST(ParserTest, ConstParameterAndUnsignedChar) {
+    Program program = parseSource("void f(const uint8_t a, unsigned char b) { }");
+    EXPECT_EQ(2u, program.functions[0].parameters.size());
+}
+
+TEST(ParserTest, PrototypeHasNoBody) {
+    Program program = parseSource("uint8_t f(uint8_t x); void main(void) { }");
+    ASSERT_EQ(1u, program.prototypes.size());
+    EXPECT_EQ("f", program.prototypes[0].name);
+    EXPECT_TRUE(program.prototypes[0].returnsValue);
+    EXPECT_EQ(1u, program.prototypes[0].parameters.size());
+    EXPECT_FALSE(program.prototypes[0].body);
+    EXPECT_EQ(1u, program.functions.size());
+}
+
+TEST(ParserTest, CallInAnExpression) {
+    EXPECT_EQ("(+ (call f 1 (+ a 2)) 3)", expressionOf("f(1, a + 2) + 3"));
+    EXPECT_EQ("(call f)", expressionOf("f()"));
+    EXPECT_EQ("(call f (call g a))", expressionOf("f(g(a))"));
+}
+
+TEST(ParserTest, CallAsAStatement) {
+    Program program = parseSource(inMain("f(1); g();"));
+    const std::vector<StmtPtr>& s = program.functions[0].body->statements;
+    ASSERT_EQ(2u, s.size());
+    EXPECT_EQ(Stmt::CALL, s[0]->kind);
+    EXPECT_EQ("(call f 1)", toString(*s[0]->expr));
+    EXPECT_EQ(Stmt::CALL, s[1]->kind);
+}
+
+TEST(ParserTest, CallInForInitAndStep) {
+    Program program = parseSource(inMain("for (f(); a < 3; g(a)) ;"));
+    const Stmt& loop = firstStatement(program);
+    EXPECT_EQ(Stmt::CALL, loop.init->kind);
+    EXPECT_EQ(Stmt::CALL, loop.step->kind);
+}
+
+TEST(ParserTest, CallNeedsAClosingParenthesis) {
+    CompileError error = errorOf(inMain("a = f(1, 2;"));
+    EXPECT_EQ(2, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("')'")) << error.message;
+}
+
+TEST(ParserTest, ArgumentsAreExpressionsNotAssignments) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("f(a = 1);")).message.find("assignment"));
+}
+
+TEST(ParserTest, VariableMayNotBeVoid) {
+    CompileError error = errorOf("void x; void main(void) { }");
+    EXPECT_EQ(1, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("void")) << error.message;
+}
+
+TEST(ParserTest, ParameterOfAnotherTypeIsNotSupportedYet) {
+    EXPECT_NE(std::string::npos, errorOf("void f(int x) { }").message.find("int"));
+}
+
+TEST(ParserTest, ParameterNeedsAName) {
+    EXPECT_EQ(1, errorOf("void f(uint8_t) { }").line);
+}
+
+TEST(ParserTest, ReturnWithAndWithoutValue) {
+    Program program = parseSource("uint8_t f(void) { return 1 + 2; } void g(void) { return; }");
+    const Stmt& withValue = *program.functions[0].body->statements.at(0);
+    EXPECT_EQ(Stmt::RETURN, withValue.kind);
+    EXPECT_EQ("(+ 1 2)", toString(*withValue.expr));
+    const Stmt& without = *program.functions[1].body->statements.at(0);
+    EXPECT_EQ(Stmt::RETURN, without.kind);
+    EXPECT_FALSE(without.expr);
+}
+
+TEST(ParserTest, BreakAndContinue) {
+    Program program = parseSource(inMain("while (a) { break; continue; }"));
+    const Stmt& loop = firstStatement(program);
+    EXPECT_EQ(Stmt::BREAK, loop.body->statements.at(0)->kind);
+    EXPECT_EQ(Stmt::CONTINUE, loop.body->statements.at(1)->kind);
+}
+
+TEST(ParserTest, DoWhile) {
+    Program program = parseSource(inMain("do a++; while (a < 5);"));
+    const Stmt& loop = firstStatement(program);
+    EXPECT_EQ(Stmt::DO_WHILE, loop.kind);
+    EXPECT_EQ("(< a 5)", toString(*loop.expr));
+    EXPECT_EQ(Stmt::STEP, loop.body->kind);
+}
+
+TEST(ParserTest, DoWhileNeedsItsSemicolon) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("do a++; while (a < 5)\nb = 1;")).message.find("';'"));
+}
+
+TEST(ParserTest, DoNeedsWhile) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("do a++; b = 1;")).message.find("while"));
+}
+
+TEST(ParserTest, StaticAndConstQualifiers) {
+    Program program = parseSource("static uint8_t a; const uint8_t b = 1; static const uint8_t c = 2; const static uint8_t d = 3;"
+                                  "void main(void) { static uint8_t e; const uint8_t f = 4; }");
+    ASSERT_EQ(4u, program.globals.size());
+    EXPECT_TRUE(program.globals[0]->isStatic);
+    EXPECT_FALSE(program.globals[0]->isConst);
+    EXPECT_TRUE(program.globals[1]->isConst);
+    EXPECT_TRUE(program.globals[2]->isStatic && program.globals[2]->isConst);
+    EXPECT_TRUE(program.globals[3]->isStatic && program.globals[3]->isConst);
+    const std::vector<StmtPtr>& s = program.functions[0].body->statements;
+    EXPECT_TRUE(s[0]->isStatic);
+    EXPECT_TRUE(s[1]->isConst);
+}
+
+TEST(ParserTest, QualifierTwiceIsAnError) {
+    EXPECT_NE(std::string::npos, errorOf("const const uint8_t a; void main(void) { }").message.find("const"));
+}
+
+TEST(ParserTest, StaticFunctionIsAccepted) {
+    Program program = parseSource("static void f(void) { } void main(void) { }");
+    EXPECT_EQ(2u, program.functions.size());
 }

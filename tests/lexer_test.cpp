@@ -83,9 +83,60 @@ TEST(LexerTest, IgnoresIncludeLines) {
 }
 
 TEST(LexerTest, OtherDirectivesAreNotSupportedYet) {
-    CompileError error = errorOf("a\n#define X 1\n");
+    CompileError error = errorOf("a\n#ifdef X\n");
     EXPECT_EQ(2, error.line);
-    EXPECT_NE(std::string::npos, error.message.find("#define")) << error.message;
+    EXPECT_NE(std::string::npos, error.message.find("#ifdef")) << error.message;
+}
+
+// #define
+
+TEST(LexerTest, DefineReplacesTheName) {
+    EXPECT_EQ("x = 5 + 1 ;", texts("#define LIMIT 5 + 1\nx = LIMIT;"));
+}
+
+TEST(LexerTest, DefineWithoutValueIsEmpty) {
+    EXPECT_EQ("a b", texts("#define NOTHING\na NOTHING b"));
+}
+
+TEST(LexerTest, DefineKnowsEarlierDefines) {
+    EXPECT_EQ("x = 3 ;", texts("#define A 3\n#define B A\nx = B;"));
+}
+
+TEST(LexerTest, DefineIsReadWhereItIsUsedNotWhereItIsDefined) {
+    EXPECT_EQ("x = 4 ;", texts("#define B A\n#define A 4\nx = B;"));
+}
+
+TEST(LexerTest, DefineThatNamesItselfStops) {
+    EXPECT_EQ("x = X + 1 ;", texts("#define X X + 1\nx = X;"));
+}
+
+TEST(LexerTest, DefineEndsAtTheEndOfTheLine) {
+    EXPECT_EQ("a 1 b", texts("#define ONE 1\na ONE\nb"));
+}
+
+TEST(LexerTest, DefineMayHaveAComment) {
+    EXPECT_EQ("x = 7 ;", texts("#define SEVEN 7 // lucky\nx = SEVEN;"));
+}
+
+TEST(LexerTest, UndefRemovesTheName) {
+    EXPECT_EQ("1 N", texts("#define N 1\nN\n#undef N\nN"));
+}
+
+TEST(LexerTest, ReplacedTokensHaveTheLineOfTheUse) {
+    std::vector<Token> tokens = tokenize("#define V 9\n\n\nx = V;");
+    EXPECT_EQ(4, tokens[2].line);
+    EXPECT_EQ(9, tokens[2].value);
+}
+
+TEST(LexerTest, DefineWithParametersIsNotSupportedYet) {
+    CompileError error = errorOf("#define F(x) x\n");
+    EXPECT_EQ(1, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("parameters")) << error.message;
+}
+
+TEST(LexerTest, DefineNeedsAName) {
+    EXPECT_EQ(1, errorOf("#define\n").line);
+    EXPECT_EQ(1, errorOf("#define 5 6\n").line);
 }
 
 TEST(LexerTest, UnknownCharacterIsAnError) {

@@ -101,10 +101,10 @@ start code.
   same time overlay each other).
 - Recursion is an error. So is a call depth above the return stack (8), counted
   over the call graph, with the chain in the message.
-- `autopage on` in generated code outside of cycle-critical routines; callees on
-  another page end with `retp`.
-- Calls reach only the first 256 words of a page: the code generator places
-  functions accordingly or reports it.
+- `autopage on` in generated code outside of cycle-critical routines; every callee
+  ends with `retp`. The assembler got `firsthalf` (a call reaches only the first
+  256 words of a page, so a callee starts there) and puts a `page` where code
+  runs on into the next page.
 **Success Criteria**:
 - Programs with up to 10 functions run correctly in the emulator.
 - Recursion and a too deep call chain are refused with a clear message.
@@ -113,7 +113,7 @@ start code.
   in two functions, overlay of locals gives the right result, a function that
   lands on another page.
 - Call depth: exactly 8 passes, 9 is an error; recursion is an error.
-**Status**: Not Started
+**Status**: Complete
 
 ## Stage 3: bigger types, pointers and the RAM layout
 

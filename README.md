@@ -9,50 +9,92 @@ xgscc -S game.c -o game.asm   # the assembler source instead
 xgsemu game.hex
 ```
 
-This is the first stage of `IMPLEMENTATION_PLAN.md`: a small subset of C.
+This is stage 2 of `IMPLEMENTATION_PLAN.md`: a small subset of C with functions.
 
 ## The C that is supported
 
 ```c
-#include <stdint.h>             // accepted and ignored, other directives are errors
+#include <stdint.h>
 
-uint8_t counter;                // global variables, optionally with a constant
-uint8_t limit = 10;             // initializer; "unsigned char" is the same type
+#define LIMIT 10                // names for constants (no macros with parameters)
 
-void main(void)                 // the only function
+const uint8_t STEP = 2;         // a constant, takes no RAM
+uint8_t total;                  // global variables, optionally with a constant
+uint8_t start = 5;              // initializer; "unsigned char" is the same type
+
+uint8_t twice(uint8_t value)    // functions of uint8_t parameters, returning
+{                               // uint8_t or void
+    static uint8_t calls;       // static locals keep their value
+    calls++;
+    return value << 1;
+}
+
+void add(uint8_t value);        // a prototype; the order of definitions is free
+
+void main(void)                 // main is void main(void) and starts the program
 {
-    uint8_t i;                  // local variables (also in blocks and in for)
+    for (uint8_t i = 0; i < LIMIT; i += STEP) {
+        if (i == 6)
+            continue;
+        add(twice(i));
+    }
+    do {
+        total--;
+    } while (total > 100 && !(total & 1));
+}
 
-    for (i = 0; i < limit; i++) {
-        counter += 3;
-    }
-    while (1) {
-        if (counter > 100 && !(counter & 1))
-            counter >>= 1;
-        else
-            counter = counter + 1;
-    }
+void add(uint8_t value)
+{
+    total += value;
 }
 ```
 
-- **Type**: `uint8_t` only. All arithmetic is 8 bit unsigned, constant
-  expressions too: `2 - 3` is 255, and a shift by 8 or more gives 0.
-- **Expressions**: `+ - & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`, `||`
-  and parentheses. Shift counts must be constants.
-- **Statements**: assignment with `= += -= &= |= ^= <<= >>=`, `++` and `--`
-  (as statements only), `if`/`else`, `while`, `for`, blocks, declarations.
-- **Not yet**: `* / %`, other types, pointers, arrays, functions besides `main`,
-  `return`, `break`, `continue`, `do`, `switch`, `#define`. The compiler says so
-  with the line: `game.c:7: operator '*' is not supported yet`.
+- **Type**: `uint8_t` (and `unsigned char`) only, plus `void` as a result. All
+  arithmetic is 8 bit unsigned, constant expressions too: `2 - 3` is 255, and a
+  shift by 8 or more gives 0.
+- **Expressions**: `+ - & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`, `||`,
+  parentheses and calls. Shift counts must be constants.
+- **Statements**: assignment with `= += -= &= |= ^= <<= >>=`, `++` and `--` (as
+  statements only), calls, `if`/`else`, `while`, `do`/`while`, `for`, `break`,
+  `continue`, `return`, blocks and declarations (also `static` and `const`).
+- **Preprocessor**: `#include` is ignored, `#define NAME tokens` and `#undef NAME`
+  work. Nothing else (no `#if`, no macros with parameters) yet.
+- **Not yet**: `* / %`, other types, pointers, arrays, `switch`, `goto`. The compiler
+  says so with the line: `game.c:7: operator '*' is not supported yet`.
+- **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
+  calls nested more than 8 deep, which is the size of the return stack of the
+  SX52.
 
-## Memory
+## Memory model
 
-- The program must fit in the first 512 words (one page).
-- 18 variables, at `0x0E`, `0x0F` and `0x10`-`0x1F`. Four temporaries for
-  expressions sit at `0x0A`-`0x0D`; an expression that needs more is refused.
-- The start code (`org fff`, `jmp _start`) selects bank 1 so that `0x10`-`0x1F` is
-  RAM, clears or initializes the globals and falls into the code of `main`.
-  When `main` ends the program loops on a `jmp` to itself.
+There is no data stack. Every variable has a fixed RAM address, chosen when the
+whole program is known:
+
+- The RAM available is `0x0A`-`0x0F` and `0x10`-`0x1F`: 22 bytes. The start code
+  selects bank 1 so that the second half is RAM and not the special registers that
+  bank 0 shows there. More RAM (the other banks) comes with stage 3.
+- Globals, static variables and the parameters of a function have an address of
+  their own. `const` variables take none.
+- The local variables and the temporaries of an expression (at most four at a time)
+  form the frame of a function. Functions that cannot be active at the same time
+  (neither calls the other, directly or through others) share their frames; so a
+  function that calls another one keeps its locals.
+- A call stores the arguments into the parameters of the callee and returns the
+  result in W. Only functions that main can reach are compiled.
+- `out of RAM` says how many bytes of which kind are needed.
+
+## Code and pages
+
+The generated source starts with `autopage on` (see the README of xgsemu): the
+assembler puts `page` where code and its jump or call target are on different
+pages of 512 words, and where code runs on into the next page. A called function
+starts at the beginning of a page or in the first half of one (a `call` reaches no
+further) and ends with `retp`, which gives the page back. `page` costs a cycle;
+the video code of stage 4 will be written without it.
+
+The start code (`org fff`, `jmp _start`) selects bank 1, initializes the globals
+and the static variables and falls into the code of `main`. When `main` ends the
+program loops on a `jmp` to itself.
 
 ## Build
 

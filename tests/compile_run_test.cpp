@@ -346,17 +346,13 @@ TEST(CompileErrorTest, MainIsRequired) {
     EXPECT_NE(std::string::npos, errorOf("uint8_t a;").find("main"));
 }
 
-TEST(CompileErrorTest, OtherFunctionsAreNotSupportedYet) {
-    EXPECT_NE(std::string::npos, errorOf("void f(void) { } void main(void) { }").find("'f'"));
-}
-
 TEST(CompileErrorTest, MainTwice) {
     EXPECT_NE(std::string::npos, errorOf("void main(void) { } void main(void) { }").find("main"));
 }
 
 TEST(CompileErrorTest, OutOfRam) {
     std::string globals;
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 23; i++) {
         globals += "uint8_t v" + number(i) + ";";
     }
     EXPECT_NE(std::string::npos, errorOf(program(globals, "")).find("RAM"));
@@ -369,14 +365,6 @@ TEST(CompileErrorTest, ExpressionTooComplex) {
         expression = "(" + expression + " + (x + " + number(i) + "))";
     }
     EXPECT_NE(std::string::npos, errorOf(program("uint8_t x; uint8_t r;", "r = " + expression + ";")).find("too complex"));
-}
-
-TEST(CompileErrorTest, ProgramLargerThanOnePage) {
-    std::string body;
-    for (int i = 0; i < 200; i++) {
-        body += "a = a + 1;\n";
-    }
-    EXPECT_NE(std::string::npos, errorOf(program("uint8_t a;", body)).find("512"));
 }
 
 TEST(CompileRunTest, TheCounterExampleCounts) {

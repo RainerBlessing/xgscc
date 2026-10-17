@@ -11,45 +11,60 @@ typedef std::unique_ptr<Stmt> StmtPtr;
 
 struct Expr
 {
-	enum Kind { NUMBER, VARIABLE, UNARY, BINARY };
+	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL };
 	Expr(Kind kind, int line) : kind(kind), line(line), value(0) {}
 
 	Kind kind;
 	int line;
 	int value;		// NUMBER
-	std::string name;	// VARIABLE: the variable, UNARY and BINARY: the operator
+	std::string name;	// VARIABLE: the variable, UNARY and BINARY: the operator, CALL: the function
 	ExprPtr left;		// UNARY: the operand
 	ExprPtr right;
+	std::vector<ExprPtr> arguments;	// CALL
 };
 
 struct Stmt
 {
-	enum Kind { EMPTY, BLOCK, DECLARATION, ASSIGNMENT, STEP, IF, WHILE, FOR };
-	Stmt(Kind kind, int line) : kind(kind), line(line) {}
+	enum Kind { EMPTY, BLOCK, DECLARATION, ASSIGNMENT, STEP, CALL, IF, WHILE, DO_WHILE, FOR, RETURN, BREAK, CONTINUE };
+	Stmt(Kind kind, int line) : kind(kind), line(line), isStatic(false), isConst(false) {}
 
 	Kind kind;
 	int line;
 	std::string name;	// DECLARATION, ASSIGNMENT, STEP: the variable
 	std::string op;		// ASSIGNMENT: "=", "+=", ...; STEP: "++" or "--"
-	ExprPtr expr;		// the value of DECLARATION (may be empty) and ASSIGNMENT, the condition of IF, WHILE, FOR (may be empty)
+	bool isStatic;		// DECLARATION
+	bool isConst;		// DECLARATION
+	ExprPtr expr;		// the value of DECLARATION (may be empty) and ASSIGNMENT and RETURN (may be empty), the call of CALL,
+				// the condition of IF, WHILE, DO_WHILE, FOR (may be empty)
 	std::vector<StmtPtr> statements;	// BLOCK
 	StmtPtr init;		// FOR
 	StmtPtr step;		// FOR
-	StmtPtr body;		// WHILE, FOR; the "then" of IF
+	StmtPtr body;		// WHILE, DO_WHILE, FOR; the "then" of IF
 	StmtPtr elseBody;	// IF
+};
+
+struct Parameter
+{
+	std::string name;
+	int line;
 };
 
 struct Function
 {
+	Function() : line(0), returnsValue(false) {}
+
 	std::string name;
 	int line;
-	StmtPtr body;		// a BLOCK
+	bool returnsValue;	// uint8_t, otherwise void
+	std::vector<Parameter> parameters;
+	StmtPtr body;		// a BLOCK, empty for a prototype
 };
 
 struct Program
 {
 	std::vector<StmtPtr> globals;		// DECLARATIONs
-	std::vector<Function> functions;
+	std::vector<Function> functions;	// the definitions
+	std::vector<Function> prototypes;	// declarations without a body
 };
 
 /** The expression in prefix form, e.g. "(+ a (<< b 2))". For tests and messages. */

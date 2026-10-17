@@ -5,9 +5,10 @@
 #include "lexer.h"
 
 /**
- * Reads the C subset: global uint8_t variables, void functions without
- * parameters, and in them declarations, assignments, ++ and --, if/else,
- * while, for and blocks. Throws CompileError.
+ * Reads the C subset: uint8_t variables (static, const), functions of uint8_t
+ * parameters returning void or uint8_t, and in them declarations, assignments,
+ * calls, ++ and --, if/else, while, do, for, break, continue, return and
+ * blocks. Throws CompileError.
  */
 Program parse(const std::vector<Token>& tokens);
 

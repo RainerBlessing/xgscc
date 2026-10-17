@@ -14,7 +14,8 @@ struct Token
 
 /**
  * Cuts C source into tokens, the last one is END. Comments and #include lines
- * are dropped. Throws CompileError.
+ * are dropped, #define and #undef are carried out (names only, no parameters).
+ * Throws CompileError.
  */
 std::vector<Token> tokenize(const std::string& source);
 

@@ -1,6 +1,8 @@
 #include "lexer.h"
 #include <cctype>
 #include <cstring>
+#include <map>
+#include <set>
 #include "errors.h"
 
 using namespace std;
@@ -47,7 +49,7 @@ namespace
 				else if (c == '\'')
 					tokens.push_back(character());
 				else if (isIdentStart(c))
-					tokens.push_back(identifier());
+					identifier(&tokens);
 				else
 					tokens.push_back(operatorToken());
 				lineStart = false;
@@ -62,6 +64,7 @@ namespace
 		size_t position;
 		int line;
 		bool lineStart;		// only blanks since the last line break
+		map<string, vector<Token> > macros;	// #define NAME tokens
 
 		char peek(size_t offset = 0) const
 		{
@@ -105,7 +108,8 @@ namespace
 			}
 		}
 
-		// Only #include is accepted, and ignored: stdint.h is built in.
+		// #include is ignored (stdint.h is built in), #define and #undef work for
+		// names without parameters.
 		void directive()
 		{
 			position++;
@@ -115,10 +119,64 @@ namespace
 			while (isIdentPart(peek()))
 				position++;
 			string name = source.substr(nameStart, position - nameStart);
-			if (name != "include")
+			string rest = restOfLine();
+			if (name == "include")
+				return;
+			if (name == "define")
+				define(rest);
+			else if (name == "undef")
+				macros.erase(macroName(rest));
+			else
 				throw CompileError(line, "#" + name + " is not supported yet");
+		}
+
+		string restOfLine()
+		{
+			size_t start = position;
 			while (position < source.size() && source[position] != '\n')
 				position++;
+			return source.substr(start, position - start);
+		}
+
+		// the name at the start of a directive's text
+		string macroName(const string& text) const
+		{
+			size_t first = text.find_first_not_of(" \t");
+			if (first == string::npos || !isIdentStart(text[first]))
+				throw CompileError(line, "a name is missing after #define or #undef");
+			size_t end = first;
+			while (end < text.size() && isIdentPart(text[end]))
+				end++;
+			return text.substr(first, end - first);
+		}
+
+		void define(const string& text)
+		{
+			string name = macroName(text);
+			size_t afterName = text.find(name) + name.size();
+			if (afterName < text.size() && text[afterName] == '(')
+				throw CompileError(line, "macros with parameters are not supported yet");
+			string replacement = text.substr(afterName);
+			Lexer inner(replacement);
+			vector<Token> tokens = inner.run();
+			tokens.pop_back();		// END
+			macros[name] = tokens;
+		}
+
+		void expand(const string& name, int useLine, set<string>* active, vector<Token>* out)
+		{
+			active->insert(name);
+			const vector<Token>& replacement = macros[name];
+			for (size_t i = 0; i < replacement.size(); i++)
+			{
+				Token token = replacement[i];
+				token.line = useLine;
+				if (token.type == Token::IDENT && macros.count(token.text) && !active->count(token.text))
+					expand(token.text, useLine, active, out);
+				else
+					out->push_back(token);
+			}
+			active->erase(name);
 		}
 
 		Token number()
@@ -198,13 +256,19 @@ namespace
 			return token;
 		}
 
-		Token identifier()
+		void identifier(vector<Token>* tokens)
 		{
 			size_t start = position;
 			while (isIdentPart(peek()))
 				position++;
 			Token token = { Token::IDENT, source.substr(start, position - start), 0, line };
-			return token;
+			if (macros.count(token.text))
+			{
+				set<string> active;
+				expand(token.text, line, &active, tokens);
+			}
+			else
+				tokens->push_back(token);
 		}
 
 		Token operatorToken()

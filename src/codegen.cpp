@@ -1,4 +1,6 @@
 #include "codegen.h"
+#include <algorithm>
+#include <set>
 #include <sstream>
 #include <vector>
 #include "errors.h"
@@ -7,34 +9,84 @@ using namespace std;
 
 // How the code is made
 //
-// Every expression is computed into W. Variables live at fixed RAM addresses:
-// the temporaries of expressions at 0x0A-0x0D, the variables at 0x0E, 0x0F and
-// 0x10-0x1F (the start code selects bank 1, so that these are RAM and not the
-// special registers that bank 0 shows at 0x10-0x1F).
+// Every expression is computed into W. A function returns its result in W.
+//
+// There is no data stack: every variable has a fixed RAM address. Globals,
+// static variables and the parameters of a function have an address of their
+// own. The local variables and the temporaries of the expressions of a function
+// are its "frame"; two functions of which neither can call the other (directly
+// or through other functions) never run at the same time and share their
+// frames. Functions that call each other cannot do so, which is why recursion
+// is refused. The addresses are chosen after all code is made: the code uses
+// names and the assembler source defines them with "equ".
+//
+// The RAM at 0x0A-0x0F and 0x10-0x1F is used (the start code selects bank 1,
+// so that 0x10-0x1F is RAM and not the special registers that bank 0 shows
+// there).
 //
 // All values are 8 bit and unsigned, constant expressions too: 2 - 3 is 255.
 // A comparison compares with "mov w, a-w": the carry is set if a >= w.
 // The jumps of conditions skip over a "jmp" with a bit test of the Z or C flag.
+//
+// Calls: the arguments are stored into the parameters of the callee, "call"
+// jumps there and the callee ends with "retp", which also restores the page of
+// the caller. The assembler source starts with "autopage on": it puts the page
+// instructions where code and callees are on different pages. A callee starts
+// with "firsthalf", because a call reaches only the first half of a page.
 
 namespace
 {
-	const int FIRST_TEMPORARY = 0x0a;
-	const int TEMPORARIES = 4;
-	const int VARIABLE_ADDRESSES[] = {
-		0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
-	};
-	const int VARIABLE_COUNT = sizeof(VARIABLE_ADDRESSES) / sizeof(VARIABLE_ADDRESSES[0]);
+	const int TEMPORARIES = 4;			// per function
+	const int RETURN_STACK = 8;			// entries of the hardware return stack
+	const int RAM_FIRST = 0x0a;
+	const int RAM_LAST = 0x1f;
 
 	struct Variable
 	{
+		Variable() : isConst(false), value(0) {}
 		string label;		// the name in the assembler source
-		int address;
+		bool isConst;		// a constant, takes no RAM
+		int value;
+	};
+
+	struct FunctionInfo
+	{
+		FunctionInfo() : line(0), returnsValue(false), body(NULL), defined(false), temporaries(0) {}
+
+		string name;
+		int line;
+		bool returnsValue;
+		vector<Parameter> parameters;
+		const Stmt* body;
+		bool defined;
+		string entry;		// label of the first instruction
+		string exit;		// label of the return
+		vector<string> parameterLabels;
+		vector<string> localLabels;
+		vector<string> staticLabels;
+		int temporaries;	// the most that were in use at a time
+		map<string, int> calls;	// the functions called -> line of the first call
+		ostringstream code;
+		ostringstream initialization;	// start code of its static variables
+	};
+
+	struct LoopLabels
+	{
+		string breakLabel;
+		string continueLabel;
 	};
 
 	string hexText(int value)
 	{
 		ostringstream out;
 		out << hex << value;
+		return out.str();
+	}
+
+	string decimal(int value)
+	{
+		ostringstream out;
+		out << value;
 		return out.str();
 	}
 
@@ -52,81 +104,138 @@ namespace
 		return "xor";
 	}
 
+	bool hasCall(const Expr& expr)
+	{
+		if (expr.kind == Expr::CALL)
+			return true;
+		return (expr.left && hasCall(*expr.left)) || (expr.right && hasCall(*expr.right));
+	}
+
 	class Generator
 	{
 	public:
-		Generator() : nextVariable(0), temporariesInUse(0), nextLabel(0) {}
+		Generator() : current(NULL), mainFunction(NULL), temporariesInUse(0), nextLabel(0) {}
 
 		string run(const Program& program, map<string, int>* globals)
 		{
 			scopes.push_back(map<string, Variable>());
-			findMain(program);
+			collectFunctions(program);
 			for (size_t i = 0; i < program.globals.size(); i++)
 				declareGlobal(*program.globals[i]);
-			*globals = globalAddresses;
+			for (size_t i = 0; i < definitionOrder.size(); i++)
+				generateFunction(functions[definitionOrder[i]]);
 
-			statement(*mainFunction->body);
-
-			ostringstream out;
-			for (size_t i = 0; i < declarations.size(); i++)
-				out << declarations[i] << "\n";
-			out << "        org fff\n"
-				"        jmp _start\n"
-				"        org 0\n"
-				"_start:\n"
-				"        bank 1\n";
-			out << initialization.str();
-			out << code.str();
-			out << "_exit:\n"
-				"        jmp _exit\n";
-			return out.str();
+			checkCalls();
+			map<string, int> addresses;
+			allocate(&addresses);
+			for (map<string, string>::const_iterator g = globalLabels.begin(); g != globalLabels.end(); ++g)
+				(*globals)[g->first] = addresses[g->second];
+			return assembly(addresses);
 		}
 
 	private:
-		const Function* mainFunction;
+		FunctionInfo* current;
+		FunctionInfo* mainFunction;
+		map<string, FunctionInfo> functions;
+		vector<string> definitionOrder;
 		vector<map<string, Variable> > scopes;
-		vector<string> declarations;			// "name equ address"
-		map<string, int> globalAddresses;
-		map<string, int> usedLabels;
-		int nextVariable;
+		vector<string> uniqueLabels;		// globals, in order
+		map<string, string> globalLabels;	// name of a global -> label
+		set<string> usedLabels;
+		vector<LoopLabels> loops;
 		int temporariesInUse;
 		int nextLabel;
 		ostringstream initialization;		// start code of the globals
-		ostringstream code;
+		vector<string> reachable;		// functions called from main, main first, in the order found
 
-		void findMain(const Program& program)
+		// functions
+
+		void collectFunctions(const Program& program)
 		{
-			mainFunction = NULL;
+			for (size_t i = 0; i < program.prototypes.size(); i++)
+				declareFunction(program.prototypes[i]);
 			for (size_t i = 0; i < program.functions.size(); i++)
 			{
 				const Function& function = program.functions[i];
-				if (function.name != "main")
-					throw CompileError(function.line, "function '" + function.name + "' is not supported yet, only main");
-				if (mainFunction != NULL)
-					throw CompileError(function.line, "main is defined twice");
-				mainFunction = &function;
+				FunctionInfo& info = declareFunction(function);
+				if (info.defined)
+					throw CompileError(function.line, "function '" + function.name + "' is defined twice");
+				info.defined = true;
+				info.body = function.body.get();
+				info.line = function.line;
+				info.parameters = function.parameters;
+				definitionOrder.push_back(function.name);
 			}
-			if (mainFunction == NULL)
+			map<string, FunctionInfo>::iterator found = functions.find("main");
+			if (found == functions.end() || !found->second.defined)
 				throw CompileError(1, "there is no function main");
+			mainFunction = &found->second;
+			if (mainFunction->returnsValue || !mainFunction->parameters.empty())
+				throw CompileError(mainFunction->line, "main must be void main(void)");
+		}
+
+		FunctionInfo& declareFunction(const Function& function)
+		{
+			map<string, FunctionInfo>::iterator found = functions.find(function.name);
+			if (found == functions.end())
+			{
+				FunctionInfo& info = functions[function.name];
+				info.name = function.name;
+				info.line = function.line;
+				info.returnsValue = function.returnsValue;
+				info.parameters = function.parameters;
+				info.entry = "f_" + function.name;
+				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
+				return info;
+			}
+			FunctionInfo& info = found->second;
+			if (info.returnsValue != function.returnsValue || info.parameters.size() != function.parameters.size())
+				throw CompileError(function.line, "'" + function.name + "' does not match its earlier declaration");
+			return info;
+		}
+
+		FunctionInfo& lookupFunction(const string& name, int line)
+		{
+			map<string, FunctionInfo>::iterator found = functions.find(name);
+			if (found == functions.end())
+				throw CompileError(line, "unknown function '" + name + "'");
+			return found->second;
 		}
 
 		// variables
 
-		Variable declare(const Stmt& declaration)
+		string newLabel(const string& wanted)
+		{
+			string label = wanted;
+			while (usedLabels.count(label))
+				label += "_";
+			usedLabels.insert(label);
+			return label;
+		}
+
+		// the label of a variable of the current function, or of a global
+		string variableLabel(const string& name) const
+		{
+			return "v_" + (current != NULL ? current->name + "_" : string()) + name;
+		}
+
+		Variable declare(const Stmt& declaration, bool isParameter = false)
 		{
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
-			if (nextVariable >= VARIABLE_COUNT)
-				throw CompileError(declaration.line, "out of RAM: more than " + decimal(VARIABLE_COUNT) + " variables");
-
 			Variable variable;
-			variable.address = VARIABLE_ADDRESSES[nextVariable++];
-			variable.label = "v_" + declaration.name;
-			while (usedLabels.count(variable.label))
-				variable.label += "_";
-			usedLabels[variable.label] = 1;
-			declarations.push_back(variable.label + " equ " + hexText(variable.address));
+			if (declaration.isConst)
+			{
+				int value;
+				if (!declaration.expr || !fold(*declaration.expr, &value))
+					throw CompileError(declaration.line, "the const '" + declaration.name + "' needs a constant initializer");
+				variable.isConst = true;
+				variable.value = value;
+			}
+			else
+				variable.label = newLabel(variableLabel(declaration.name));
+			(void) isParameter;
 			scope[declaration.name] = variable;
 			return variable;
 		}
@@ -142,18 +251,57 @@ namespace
 			throw CompileError(line, "unknown variable '" + name + "'");
 		}
 
-		void declareGlobal(const Stmt& declaration)
+		// a variable that is not a constant, to be changed
+		const Variable& lookupForWriting(const string& name, int line) const
 		{
-			Variable variable = declare(declaration);
-			globalAddresses[declaration.name] = variable.address;
+			const Variable& variable = lookup(name, line);
+			if (variable.isConst)
+				throw CompileError(line, "cannot change the const '" + name + "'");
+			return variable;
+		}
+
+		bool isPlainVariable(const Expr& expr) const
+		{
+			return expr.kind == Expr::VARIABLE && !lookup(expr.name, expr.line).isConst;
+		}
+
+		// start code that gives a variable with its own address its first value
+		void initialize(ostringstream& out, const Stmt& declaration, const Variable& variable)
+		{
 			int value = 0;
 			if (declaration.expr && !fold(*declaration.expr, &value))
 				throw CompileError(declaration.line, "the initializer of '" + declaration.name + "' is not constant");
 			if (value == 0)
-				initialization << "        clr " << variable.label << "\n";
+				out << "        clr " << variable.label << "\n";
 			else
-				initialization << "        mov w, #" << hexText(value) << "\n"
+				out << "        mov w, #" << hexText(value) << "\n"
 					"        mov " << variable.label << ", w\n";
+		}
+
+		void declareGlobal(const Stmt& declaration)
+		{
+			Variable variable = declare(declaration);
+			if (variable.isConst)
+				return;
+			uniqueLabels.push_back(variable.label);
+			globalLabels[declaration.name] = variable.label;
+			initialize(initialization, declaration, variable);
+		}
+
+		void localDeclaration(const Stmt& stmt)
+		{
+			Variable variable = declare(stmt);
+			if (variable.isConst)
+				return;
+			if (stmt.isStatic)
+			{
+				current->staticLabels.push_back(variable.label);
+				initialize(current->initialization, stmt, variable);
+				return;
+			}
+			current->localLabels.push_back(variable.label);
+			if (stmt.expr)
+				store(variable.label, *stmt.expr);
 		}
 
 		// temporaries
@@ -162,7 +310,8 @@ namespace
 		{
 			if (temporariesInUse >= TEMPORARIES)
 				throw CompileError(line, "the expression is too complex (more than " + decimal(TEMPORARIES) + " temporaries)");
-			return FIRST_TEMPORARY + temporariesInUse++;
+			current->temporaries = max(current->temporaries, temporariesInUse + 1);
+			return temporariesInUse++;
 		}
 
 		void freeTemporary()
@@ -170,24 +319,24 @@ namespace
 			temporariesInUse--;
 		}
 
-		static string temporary(int address)
+		string temporary(int index) const
 		{
-			return hexText(address);
+			return "t_" + current->name + "_" + decimal(index);
 		}
 
 		// output
 
 		void emit(const string& instruction)
 		{
-			code << "        " << instruction << "\n";
+			current->code << "        " << instruction << "\n";
 		}
 
 		void label(const string& name)
 		{
-			code << name << ":\n";
+			current->code << name << ":\n";
 		}
 
-		string newLabel()
+		string newJumpLabel()
 		{
 			return "_L" + hexText(nextLabel++);
 		}
@@ -205,6 +354,12 @@ namespace
 				*value = expr.value;
 				return true;
 			case Expr::VARIABLE:
+			{
+				const Variable& variable = lookup(expr.name, expr.line);
+				*value = variable.value;
+				return variable.isConst;
+			}
+			case Expr::CALL:
 				return false;
 			case Expr::UNARY:
 			{
@@ -227,13 +382,6 @@ namespace
 				return true;
 			}
 			}
-		}
-
-		static string decimal(int value)
-		{
-			ostringstream out;
-			out << value;
-			return out.str();
 		}
 
 		static int apply(const string& op, int a, int b)
@@ -285,6 +433,9 @@ namespace
 			case Expr::VARIABLE:
 				emit("mov w, " + lookup(expr.name, expr.line).label);
 				return;
+			case Expr::CALL:
+				call(expr, true);
+				return;
 			case Expr::UNARY:
 				unaryExpression(expr);
 				return;
@@ -297,7 +448,7 @@ namespace
 		// emulator takes for an empty ROM word.
 		void complement(const Expr& value, int line)
 		{
-			if (value.kind == Expr::VARIABLE)
+			if (isPlainVariable(value))
 			{
 				emit("mov w, /" + lookup(value.name, value.line).label);
 				return;
@@ -375,7 +526,7 @@ namespace
 			{
 				if (k == 0)
 					expression(a);
-				else if (a.kind == Expr::VARIABLE)
+				else if (isPlainVariable(a))
 				{
 					emit("mov w, #" + hexText(k));
 					emit("add w, " + lookup(a.name, a.line).label);
@@ -408,7 +559,7 @@ namespace
 		{
 			string from;
 			bool temporaryUsed = false;
-			if (a.kind == Expr::VARIABLE)
+			if (isPlainVariable(a))
 				from = lookup(a.name, a.line).label;
 			else
 			{
@@ -449,13 +600,87 @@ namespace
 			freeTemporary();
 		}
 
+		// calls
+
+		// W = the result of the function
+		void call(const Expr& expr, bool valueNeeded)
+		{
+			if (expr.name == "main")
+				throw CompileError(expr.line, "main cannot be called");
+			FunctionInfo& callee = lookupFunction(expr.name, expr.line);
+			if (expr.arguments.size() != callee.parameters.size())
+				throw CompileError(expr.line, "function '" + callee.name + "' takes " + decimal((int) callee.parameters.size()) +
+					" argument(s), not " + decimal((int) expr.arguments.size()));
+			if (valueNeeded && !callee.returnsValue)
+				throw CompileError(expr.line, "function '" + callee.name + "' returns no value");
+			if (!current->calls.count(callee.name))
+				current->calls[callee.name] = expr.line;
+			ensureParameterLabels(callee);
+
+			// An argument that contains a call may run this very function and
+			// write its parameters: the arguments before it wait in temporaries.
+			size_t count = expr.arguments.size();
+			vector<int> held(count, -1);
+			for (size_t i = 0; i < count; i++)
+			{
+				bool laterCall = false;
+				for (size_t j = i + 1; j < count; j++)
+					laterCall = laterCall || hasCall(*expr.arguments[j]);
+				if (laterCall)
+				{
+					expression(*expr.arguments[i]);
+					held[i] = allocateTemporary(expr.line);
+					emit("mov " + temporary(held[i]) + ", w");
+				}
+				else
+					store(callee.parameterLabels[i], *expr.arguments[i]);
+			}
+			for (size_t i = 0; i < count; i++)
+			{
+				if (held[i] >= 0)
+				{
+					emit("mov w, " + temporary(held[i]));
+					emit("mov " + callee.parameterLabels[i] + ", w");
+				}
+			}
+			for (size_t i = 0; i < count; i++)
+			{
+				if (held[i] >= 0)
+					freeTemporary();
+			}
+			emit("call " + callee.entry);
+		}
+
+		// The parameters of a function have names before the function is made.
+		void ensureParameterLabels(FunctionInfo& function)
+		{
+			if (function.parameterLabels.size() == function.parameters.size())
+				return;
+			function.parameterLabels.clear();
+			for (size_t i = 0; i < function.parameters.size(); i++)
+				function.parameterLabels.push_back(parameterLabel(function, function.parameters[i].name));
+		}
+
+		string parameterLabel(const FunctionInfo& function, const string& name)
+		{
+			string wanted = "v_" + function.name + "_" + name;
+			map<string, string>::const_iterator found = parameterNames.find(wanted);
+			if (found != parameterNames.end())
+				return found->second;
+			string label = newLabel(wanted);
+			parameterNames[wanted] = label;
+			return label;
+		}
+
+		map<string, string> parameterNames;
+
 		// conditions
 
 		// W = 0 or 1
 		void booleanValue(const Expr& expr)
 		{
 			int t = allocateTemporary(expr.line);
-			string isFalse = newLabel();
+			string isFalse = newJumpLabel();
 			emit("clr " + temporary(t));
 			jumpIfFalse(expr, isFalse);
 			emit("inc " + temporary(t));
@@ -493,7 +718,7 @@ namespace
 				}
 				else
 				{
-					string skip = newLabel();
+					string skip = newJumpLabel();
 					branch(!onTrue, *expr.left, skip);
 					branch(onTrue, *expr.right, target);
 					label(skip);
@@ -537,6 +762,36 @@ namespace
 
 		// statements
 
+		void generateFunction(FunctionInfo& function)
+		{
+			current = &function;
+			temporariesInUse = 0;
+			loops.clear();
+			ensureParameterLabels(function);
+
+			scopes.push_back(map<string, Variable>());
+			for (size_t i = 0; i < function.parameters.size(); i++)
+			{
+				const Parameter& parameter = function.parameters[i];
+				if (scopes.back().count(parameter.name))
+					throw CompileError(parameter.line, "'" + parameter.name + "' is declared twice");
+				Variable variable;
+				variable.label = function.parameterLabels[i];
+				scopes.back()[parameter.name] = variable;
+			}
+			if (&function != mainFunction)
+				label(function.entry);
+			for (size_t i = 0; i < function.body->statements.size(); i++)
+				statement(*function.body->statements[i]);
+			if (&function != mainFunction)
+			{
+				label(function.exit);
+				emit("retp");
+			}
+			scopes.pop_back();
+			current = NULL;
+		}
+
 		void statement(const Stmt& stmt)
 		{
 			switch (stmt.kind)
@@ -556,7 +811,10 @@ namespace
 				assignment(stmt);
 				break;
 			case Stmt::STEP:
-				emit(string(stmt.op == "++" ? "inc " : "dec ") + lookup(stmt.name, stmt.line).label);
+				emit(string(stmt.op == "++" ? "inc " : "dec ") + lookupForWriting(stmt.name, stmt.line).label);
+				break;
+			case Stmt::CALL:
+				call(*stmt.expr, false);
 				break;
 			case Stmt::IF:
 				ifStatement(stmt);
@@ -564,37 +822,41 @@ namespace
 			case Stmt::WHILE:
 				whileStatement(stmt);
 				break;
+			case Stmt::DO_WHILE:
+				doStatement(stmt);
+				break;
 			case Stmt::FOR:
 				forStatement(stmt);
+				break;
+			case Stmt::RETURN:
+				returnStatement(stmt);
+				break;
+			case Stmt::BREAK:
+			case Stmt::CONTINUE:
+				jumpOutOfLoop(stmt);
 				break;
 			}
 		}
 
-		void localDeclaration(const Stmt& stmt)
-		{
-			Variable variable = declare(stmt);
-			if (stmt.expr)
-				store(variable, *stmt.expr);
-		}
-
-		void store(const Variable& variable, const Expr& value)
+		// label = the value
+		void store(const string& target, const Expr& value)
 		{
 			int constant;
 			if (fold(value, &constant) && constant == 0)
 			{
-				emit("clr " + variable.label);
+				emit("clr " + target);
 				return;
 			}
 			expression(value);
-			emit("mov " + variable.label + ", w");
+			emit("mov " + target + ", w");
 		}
 
 		void assignment(const Stmt& stmt)
 		{
-			const Variable& variable = lookup(stmt.name, stmt.line);
+			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
 			if (stmt.op == "=")
 			{
-				store(variable, *stmt.expr);
+				store(variable.label, *stmt.expr);
 				return;
 			}
 			// a op= b is a = a op b
@@ -610,14 +872,33 @@ namespace
 			emit("mov " + variable.label + ", w");
 		}
 
+		void returnStatement(const Stmt& stmt)
+		{
+			if (current->returnsValue && !stmt.expr)
+				throw CompileError(stmt.line, "'return' needs a value in function '" + current->name + "'");
+			if (!current->returnsValue && stmt.expr)
+				throw CompileError(stmt.line, "'return' with a value in the void function '" + current->name + "'");
+			if (stmt.expr)
+				expression(*stmt.expr);
+			emit("jmp " + current->exit);
+		}
+
+		void jumpOutOfLoop(const Stmt& stmt)
+		{
+			bool isBreak = stmt.kind == Stmt::BREAK;
+			if (loops.empty())
+				throw CompileError(stmt.line, string("'") + (isBreak ? "break" : "continue") + "' is not inside a loop");
+			emit("jmp " + (isBreak ? loops.back().breakLabel : loops.back().continueLabel));
+		}
+
 		void ifStatement(const Stmt& stmt)
 		{
-			string otherwise = newLabel();
+			string otherwise = newJumpLabel();
 			jumpIfFalse(*stmt.expr, otherwise);
 			statement(*stmt.body);
 			if (stmt.elseBody)
 			{
-				string end = newLabel();
+				string end = newJumpLabel();
 				emit("jmp " + end);
 				label(otherwise);
 				statement(*stmt.elseBody);
@@ -629,12 +910,30 @@ namespace
 
 		void whileStatement(const Stmt& stmt)
 		{
-			string top = newLabel();
-			string end = newLabel();
+			string top = newJumpLabel();
+			string end = newJumpLabel();
 			label(top);
 			jumpIfFalse(*stmt.expr, end);
+			LoopLabels labels = { end, top };
+			loops.push_back(labels);
 			statement(*stmt.body);
+			loops.pop_back();
 			emit("jmp " + top);
+			label(end);
+		}
+
+		void doStatement(const Stmt& stmt)
+		{
+			string top = newJumpLabel();
+			string next = newJumpLabel();
+			string end = newJumpLabel();
+			label(top);
+			LoopLabels labels = { end, next };
+			loops.push_back(labels);
+			statement(*stmt.body);
+			loops.pop_back();
+			label(next);
+			jumpIfTrue(*stmt.expr, top);
 			label(end);
 		}
 
@@ -643,17 +942,198 @@ namespace
 			scopes.push_back(map<string, Variable>());
 			if (stmt.init)
 				statement(*stmt.init);
-			string top = newLabel();
-			string end = newLabel();
+			string top = newJumpLabel();
+			string next = newJumpLabel();
+			string end = newJumpLabel();
 			label(top);
 			if (stmt.expr)
 				jumpIfFalse(*stmt.expr, end);
+			LoopLabels labels = { end, next };
+			loops.push_back(labels);
 			statement(*stmt.body);
+			loops.pop_back();
+			label(next);
 			if (stmt.step)
 				statement(*stmt.step);
 			emit("jmp " + top);
 			label(end);
 			scopes.pop_back();
+		}
+
+		// what the calls make of the program
+
+		void checkCalls()
+		{
+			vector<string> path;
+			set<string> done;
+			visit("main", 0, &path, &done);
+			if (!reachable.empty())
+				checkDepth();
+		}
+
+		// finds the functions that main can reach, refuses recursion
+		void visit(const string& name, int callLine, vector<string>* path, set<string>* done)
+		{
+			FunctionInfo& function = functions[name];
+			if (!function.defined)
+				throw CompileError(callLine, "function '" + name + "' is declared but not defined");
+			vector<string>::iterator onPath = find(path->begin(), path->end(), name);
+			if (onPath != path->end())
+			{
+				string cycle;
+				for (; onPath != path->end(); ++onPath)
+					cycle += *onPath + " -> ";
+				throw CompileError(callLine, "recursion is not supported: " + cycle + name);
+			}
+			if (done->count(name))
+				return;
+			path->push_back(name);
+			reachable.push_back(name);
+			for (map<string, int>::const_iterator call = function.calls.begin(); call != function.calls.end(); ++call)
+				visit(call->first, call->second, path, done);
+			path->pop_back();
+			done->insert(name);
+		}
+
+		// the most calls inside each other: main -> f -> g is 2
+		int depthOf(const string& name, map<string, int>* depths, map<string, string>* deepest)
+		{
+			map<string, int>::const_iterator known = depths->find(name);
+			if (known != depths->end())
+				return known->second;
+			int best = 0;
+			const map<string, int>& calls = functions[name].calls;
+			for (map<string, int>::const_iterator call = calls.begin(); call != calls.end(); ++call)
+			{
+				int depth = 1 + depthOf(call->first, depths, deepest);
+				if (depth > best)
+				{
+					best = depth;
+					(*deepest)[name] = call->first;
+				}
+			}
+			(*depths)[name] = best;
+			return best;
+		}
+
+		void checkDepth()
+		{
+			map<string, int> depths;
+			map<string, string> deepest;
+			int depth = depthOf("main", &depths, &deepest);
+			if (depth <= RETURN_STACK)
+				return;
+			string chain = "main";
+			string last = "main";
+			for (string name = "main"; deepest.count(name); name = deepest[name])
+			{
+				last = deepest[name];
+				chain += " -> " + last;
+			}
+			int line = functions["main"].calls[deepest["main"]];
+			throw CompileError(line, "the calls are " + decimal(depth) + " deep, the return stack has " + decimal(RETURN_STACK) +
+				" entries: " + chain);
+		}
+
+		// memory
+
+		void descendants(const string& name, set<string>* found)
+		{
+			const map<string, int>& calls = functions[name].calls;
+			for (map<string, int>::const_iterator call = calls.begin(); call != calls.end(); ++call)
+			{
+				if (found->insert(call->first).second)
+					descendants(call->first, found);
+			}
+		}
+
+		static int frameSize(const FunctionInfo& function)
+		{
+			return (int) function.localLabels.size() + function.temporaries;
+		}
+
+		// Gives every label an address.
+		void allocate(map<string, int>* addresses)
+		{
+			vector<string> unique = uniqueLabels;
+			for (size_t i = 0; i < reachable.size(); i++)
+			{
+				const FunctionInfo& function = functions[reachable[i]];
+				unique.insert(unique.end(), function.parameterLabels.begin(), function.parameterLabels.end());
+				unique.insert(unique.end(), function.staticLabels.begin(), function.staticLabels.end());
+			}
+
+			// Callers come before the functions they call: the frame of a function
+			// starts behind the frames of all functions that can call it.
+			vector<string> order = reachable;
+			map<string, set<string> > reach;
+			for (size_t i = 0; i < order.size(); i++)
+				descendants(order[i], &reach[order[i]]);
+			map<string, int> base;
+			int frames = 0;
+			for (size_t pass = 0; pass < order.size(); pass++)
+			{
+				for (size_t i = 0; i < order.size(); i++)
+				{
+					int start = 0;
+					for (size_t j = 0; j < order.size(); j++)
+					{
+						if (reach[order[j]].count(order[i]) && base.count(order[j]))
+							start = max(start, base[order[j]] + frameSize(functions[order[j]]));
+					}
+					base[order[i]] = start;
+				}
+			}
+			for (size_t i = 0; i < order.size(); i++)
+				frames = max(frames, base[order[i]] + frameSize(functions[order[i]]));
+
+			int available = RAM_LAST - RAM_FIRST + 1;
+			int needed = (int) unique.size() + frames;
+			if (needed > available)
+				throw CompileError(mainFunction->line, "out of RAM: " + decimal(needed) + " bytes needed, " + decimal(available) +
+					" available (" + decimal((int) unique.size()) + " for globals, parameters and static variables, " +
+					decimal(frames) + " for local variables and temporaries)");
+
+			int next = RAM_FIRST;
+			for (size_t i = 0; i < unique.size(); i++)
+				(*addresses)[unique[i]] = next++;
+			int framesStart = next;
+			for (size_t i = 0; i < order.size(); i++)
+			{
+				FunctionInfo& function = functions[order[i]];
+				int address = framesStart + base[order[i]];
+				for (size_t l = 0; l < function.localLabels.size(); l++)
+					(*addresses)[function.localLabels[l]] = address++;
+				for (int t = 0; t < function.temporaries; t++)
+					(*addresses)["t_" + function.name + "_" + decimal(t)] = address++;
+			}
+		}
+
+		string assembly(const map<string, int>& addresses)
+		{
+			ostringstream out;
+			for (map<string, int>::const_iterator a = addresses.begin(); a != addresses.end(); ++a)
+				out << a->first << " equ " << hexText(a->second) << "\n";
+			out << "        org fff\n"
+				"        jmp _start\n"
+				"        org 0\n"
+				"        autopage on\n"
+				"_start:\n"
+				"        bank 1\n";
+			out << initialization.str();
+			for (size_t i = 0; i < reachable.size(); i++)
+				out << functions[reachable[i]].initialization.str();
+			out << mainFunction->code.str();
+			out << "_exit:\n"
+				"        jmp _exit\n";
+			for (size_t i = 0; i < definitionOrder.size(); i++)
+			{
+				const FunctionInfo& function = functions[definitionOrder[i]];
+				if (&function == mainFunction || find(reachable.begin(), reachable.end(), function.name) == reachable.end())
+					continue;
+				out << "        firsthalf\n" << function.code.str();
+			}
+			return out.str();
 		}
 	};
 }
