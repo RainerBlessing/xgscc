@@ -10,6 +10,14 @@ int ProgramRun::value(const std::string& name) const
 	return ram[found->second];
 }
 
+int ProgramRun::value16(const std::string& name) const
+{
+	std::map<std::string, int>::const_iterator high = compiled.highBytes.find(name);
+	if (high == compiled.highBytes.end())
+		return -1;
+	return value(name) | ram[high->second] << 8;
+}
+
 ProgramRun runProgram(const std::string& source, long maxSteps)
 {
 	ProgramRun run;

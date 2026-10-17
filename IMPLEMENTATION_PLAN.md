@@ -133,7 +133,7 @@ the one before):
 2. **3b Types.** `int8_t`, `uint16_t`, `int16_t`, casts, usual conversions
    (the larger size wins, unsigned wins a tie), 16 bit values in functions
    (result in W and a register for the high byte), signed compares.
-   Status: Not Started
+   Status: Complete
 3. **3c Pointers and arrays** of RAM through FSR/INDF. A pointer is the 8 bit RAM
    address. Indexing, `&x`, `*p`, pointer arguments, strings as `const` data
    in ROM come with 3d.
@@ -163,7 +163,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3b next)
+**Status**: In Progress (3c next)
 
 ## Stage 4: the XGS library and the video kernel
 

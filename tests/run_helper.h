@@ -12,8 +12,10 @@ struct ProgramRun
 	long steps;			// executed instructions
 	unsigned char ram[256];
 
-	// the value of a global variable after the run
+	// the value of a global variable after the run (the low byte of a 16 bit one)
 	int value(const std::string& name) const;
+	// the value of a 16 bit global variable, as unsigned
+	int value16(const std::string& name) const;
 };
 
 ProgramRun runProgram(const std::string& source, long maxSteps = 200000);

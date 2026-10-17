@@ -361,7 +361,7 @@ TEST(CompileErrorTest, OutOfRam) {
 TEST(CompileErrorTest, ExpressionTooComplex) {
     // every level holds the left half in a temporary while it computes the right one
     std::string expression = "(x + 1)";
-    for (int i = 2; i <= 6; i++) {
+    for (int i = 2; i <= 14; i++) {
         expression = "(" + expression + " + (x + " + number(i) + "))";
     }
     EXPECT_NE(std::string::npos, errorOf(program("uint8_t x; uint8_t r;", "r = " + expression + ";")).find("too complex"));
@@ -377,10 +377,4 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     // jmp _start, the clear of the global and the clear of "counter = 0", then
     // inc + jmp per round and the last step is an inc; the counter wraps at 256
     EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
-}
-
-TEST(CompileErrorTest, TypesTheGeneratorDoesNotKnowYetAreRefused) {
-    EXPECT_NE(std::string::npos, errorOf("uint16_t x; void main(void) { }").find("uint16_t"));
-    EXPECT_NE(std::string::npos, errorOf("void main(void) { int8_t y; }").find("int8_t"));
-    EXPECT_NE(std::string::npos, errorOf("uint8_t x; void main(void) { x = (uint8_t)x; }").find("cast"));
 }

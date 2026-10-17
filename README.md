@@ -49,9 +49,16 @@ void add(uint8_t value)
 }
 ```
 
-- **Type**: `uint8_t` (and `unsigned char`) only, plus `void` as a result. All
-  arithmetic is 8 bit unsigned, constant expressions too: `2 - 3` is 255, and a
-  shift by 8 or more gives 0.
+- **Types**: `uint8_t`, `int8_t`, `uint16_t`, `int16_t` (also `unsigned char`,
+  `signed char`), and `void` as a result. A value of 16 bits is returned in W and
+  the register `acc_hi`. Casts convert: `(uint16_t)x`, `(uint8_t)w`.
+- **Arithmetic**: an operation has the larger of the types of its operands
+  (unsigned if one is and the sizes are equal, like C). Unlike C, 8 bit stays 8 bit:
+  `200 + 100` in `uint8_t` is 44, even if it is stored in a `uint16_t`. Cast one
+  operand to get 300. A constant takes the type of the other operand if it fits, and
+  widens the operation if not; `x < 300` for a `uint8_t x` compares as 16 bit.
+  Constants are computed exactly, and a shift by the size of the type or more gives 0
+  (for `>>` of a signed value 0 or -1).
 - **Expressions**: `+ - & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`, `||`,
   parentheses and calls. Shift counts must be constants.
 - **Statements**: assignment with `= += -= &= |= ^= <<= >>=`, `++` and `--` (as
@@ -59,7 +66,8 @@ void add(uint8_t value)
   `continue`, `return`, blocks and declarations (also `static` and `const`).
 - **Preprocessor**: `#include` is ignored, `#define NAME tokens` and `#undef NAME`
   work. Nothing else (no `#if`, no macros with parameters) yet.
-- **Not yet**: `* / %`, other types, pointers, arrays, `switch`, `goto`. The compiler
+- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, pointers, arrays,
+  `switch`, `goto`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the

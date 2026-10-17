@@ -16,7 +16,7 @@ CompileResult compile(const string& source, const string& fileName)
 	try
 	{
 		Program program = parse(tokenize(source));
-		result.assembly = generateAssembly(program, &result.variables);
+		result.assembly = generateAssembly(program, &result.variables, &result.highBytes);
 
 		result.rom.assign(ROM_WORDS, 0xfff);
 		string error;
