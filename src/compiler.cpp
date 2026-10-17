@@ -5,6 +5,7 @@
 #include "errors.h"
 #include "lexer.h"
 #include "parser.h"
+#include "runtime.h"
 
 using namespace std;
 
@@ -16,6 +17,10 @@ CompileResult compile(const string& source, const string& fileName)
 	try
 	{
 		Program program = parse(tokenize(source));
+		// the runtime comes behind the program, only what is called gets into the ROM
+		Program runtime = parse(tokenize(runtimeSource()));
+		for (size_t i = 0; i < runtime.functions.size(); i++)
+			program.functions.push_back(std::move(runtime.functions[i]));
 		result.assembly = generateAssembly(program, &result.variables, &result.highBytes);
 
 		result.rom.assign(ROM_WORDS, 0xfff);

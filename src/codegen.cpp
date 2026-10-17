@@ -104,7 +104,7 @@ namespace
 
 	struct FunctionInfo
 	{
-		FunctionInfo() : line(0), returnsValue(false), body(NULL), defined(false), temporaries(0) {}
+		FunctionInfo() : line(0), returnsValue(false), body(NULL), defined(false), temporaries(0), usesHigh(false), usesLow(false) {}
 
 		string name;
 		int line;
@@ -121,6 +121,8 @@ namespace
 		vector<Block> blocks;	// arrays: they keep their place, the frames of functions are shared
 		vector<Table> tables;
 		int temporaries;	// the most that were in use at a time
+		bool usesHigh;		// acc_hi, acc_lo
+		bool usesLow;
 		map<string, int> calls;	// the functions called -> line of the first call
 		ostringstream code;
 		ostringstream initialization;	// start code of its static variables
@@ -172,13 +174,6 @@ namespace
 		if (op == "&") return "and";
 		if (op == "|") return "or";
 		return "xor";
-	}
-
-	bool hasCall(const Expr& expr)
-	{
-		if (expr.kind == Expr::CALL)
-			return true;
-		return (expr.left && hasCall(*expr.left)) || (expr.right && hasCall(*expr.right));
 	}
 
 	// the value as the type holds it: 300 as uint8_t is 44, 200 as int8_t is -56
@@ -776,9 +771,9 @@ namespace
 				int weight = 1 << (3 * min(loopDepth, 3));
 				weights[used] += weight;
 				if (used == ACC_HIGH)
-					usesHighByte = true;
+					noteHigh();
 				if (used == ACC_LOW)
-					usesLowByte = true;
+					noteLow();
 				lines += "        @bank " + used + "\n";
 			}
 			return lines + "        " + instruction + "\n";
@@ -856,6 +851,13 @@ namespace
 		{
 			if (op == "+") return a + b;
 			if (op == "-") return a - b;
+			if (op == "*") return a * b;
+			if (op == "/" || op == "%")
+			{
+				if (b == 0)
+					throw CompileError(line, "division by zero in a constant expression");
+				return op == "/" ? a / b : a % b;
+			}
 			if (op == "&") return a & b;
 			if (op == "|") return a | b;
 			if (op == "^") return a ^ b;
@@ -879,6 +881,24 @@ namespace
 		{
 			long value;
 			return fold(expr, &value);
+		}
+
+		// whether evaluating the expression calls a function, also one of the
+		// runtime routines that * / % and shifts by a variable amount use
+		bool hasCall(const Expr& expr) const
+		{
+			if (expr.kind == Expr::CALL)
+				return true;
+			if (isConstant(expr))
+				return false;
+			if (expr.kind == Expr::BINARY)
+			{
+				if (expr.name == "*" || expr.name == "/" || expr.name == "%")
+					return true;
+				if ((expr.name == "<<" || expr.name == ">>") && !isConstant(*expr.right))
+					return true;
+			}
+			return (expr.left && hasCall(*expr.left)) || (expr.right && hasCall(*expr.right));
 		}
 
 		bool isSimple(const Expr& expr) const
@@ -1036,15 +1056,32 @@ namespace
 
 		// 16 bit values
 
+		// acc_hi and acc_lo get a place only if a function that is called uses them
+		void noteHigh()
+		{
+			if (current != NULL)
+				current->usesHigh = true;
+			else
+				usesHighByte = true;
+		}
+
+		void noteLow()
+		{
+			if (current != NULL)
+				current->usesLow = true;
+			else
+				usesLowByte = true;
+		}
+
 		string accHigh()
 		{
-			usesHighByte = true;
+			noteHigh();
 			return ACC_HIGH;
 		}
 
 		string accLow()
 		{
-			usesLowByte = true;
+			noteLow();
 			return ACC_LOW;
 		}
 
@@ -1478,6 +1515,8 @@ namespace
 			if (typeOf(a).isPointer || typeOf(b).isPointer)
 				return pointerArithmetic(op, a, b, line);
 			Type type = operationType(a, b, false);
+			if (op == "*" || op == "/" || op == "%")
+				return runtimeOperation(op, a, b, type, line);
 			if (type.size == 2)
 			{
 				wideOperation(op, a, b, type);
@@ -1487,6 +1526,17 @@ namespace
 				subtract(a, b, line);
 			else
 				combine(op, a, b, line);
+			return type;
+		}
+
+		// * / % are done by a routine of the runtime; the product has the same bits
+		// for signed and unsigned values, the quotient and the remainder do not
+		Type runtimeOperation(const string& op, const Expr& a, const Expr& b, const Type& type, int line)
+		{
+			string name = op == "*" ? "__mul" : op == "/" ? "__div" : "__mod";
+			name += type.size == 1 ? "8" : "16";
+			name += op == "*" || !type.isSigned ? "u" : "s";
+			callRuntime(name, a, b, line);
 			return type;
 		}
 
@@ -1621,12 +1671,19 @@ namespace
 		// W (and acc_hi) = value << count or value >> count, the count is constant
 		Type shift(const string& op, const Expr& valueExpr, const Expr& countExpr, int line)
 		{
+			Type type = noPointer(typeOf(valueExpr), op, line);
 			long count;
 			if (!fold(countExpr, &count))
-				throw CompileError(line, "the shift count must be constant");
+			{
+				string name = op == "<<" ? "__shl" : "__shr";
+				name += type.size == 1 ? "8" : "16";
+				if (op == ">>")
+					name += type.isSigned ? "s" : "u";
+				callRuntime(name, valueExpr, countExpr, line);
+				return type;
+			}
 			if (count < 0)
 				throw CompileError(line, "the shift count " + decimal(count) + " is negative");
-			Type type = noPointer(typeOf(valueExpr), op, line);
 			expressionAs(valueExpr, type);
 			if (count == 0)
 				return type;
@@ -1683,29 +1740,49 @@ namespace
 			if (expr.arguments.size() != callee.parameters.size())
 				throw CompileError(expr.line, "function '" + callee.name + "' takes " + decimal((long) callee.parameters.size()) +
 					" argument(s), not " + decimal((long) expr.arguments.size()));
+			vector<const Expr*> arguments;
+			for (size_t i = 0; i < expr.arguments.size(); i++)
+				arguments.push_back(expr.arguments[i].get());
+			return callFunction(callee, arguments, expr.line, valueNeeded);
+		}
+
+		// a routine of the runtime (see runtime.cpp), which is written in C
+		Type callRuntime(const string& name, const Expr& a, const Expr& b, int line)
+		{
+			map<string, FunctionInfo>::iterator found = functions.find(name);
+			if (found == functions.end())
+				throw CompileError(line, "internal error: the runtime routine " + name + " is missing");
+			vector<const Expr*> arguments;
+			arguments.push_back(&a);
+			arguments.push_back(&b);
+			return callFunction(found->second, arguments, line, true);
+		}
+
+		Type callFunction(FunctionInfo& callee, const vector<const Expr*>& arguments, int line, bool valueNeeded)
+		{
 			if (valueNeeded && !callee.returnsValue)
-				throw CompileError(expr.line, "function '" + callee.name + "' returns no value");
+				throw CompileError(line, "function '" + callee.name + "' returns no value");
 			if (!current->calls.count(callee.name))
-				current->calls[callee.name] = expr.line;
+				current->calls[callee.name] = line;
 			ensureParameterLabels(callee);
 
 			// An argument that contains a call may run this very function and
 			// write its parameters: the arguments before it wait in temporaries.
-			size_t count = expr.arguments.size();
+			size_t count = arguments.size();
 			vector<Operand> held(count);
 			for (size_t i = 0; i < count; i++)
 			{
 				const Type& type = callee.parameters[i].type;
 				bool laterCall = false;
 				for (size_t j = i + 1; j < count; j++)
-					laterCall = laterCall || hasCall(*expr.arguments[j]);
+					laterCall = laterCall || hasCall(*arguments[j]);
 				if (laterCall)
 				{
-					expressionAs(*expr.arguments[i], type);
-					held[i] = spill(type, expr.line);
+					expressionAs(*arguments[i], type);
+					held[i] = spill(type, line);
 				}
 				else
-					storeExpression(callee.parameterLabels[i].lo, callee.parameterLabels[i].hi, type, *expr.arguments[i]);
+					storeExpression(callee.parameterLabels[i].lo, callee.parameterLabels[i].hi, type, *arguments[i]);
 			}
 			for (size_t i = 0; i < count; i++)
 			{
@@ -2341,12 +2418,19 @@ namespace
 					places.push_back(vector<string>(1, function.staticLabels[p]));
 				blocks.insert(blocks.end(), function.blocks.begin(), function.blocks.end());
 			}
-			if (usesHighByte)
+			bool high = usesHighByte;
+			bool low = usesLowByte;
+			for (size_t i = 0; i < reachable.size(); i++)
+			{
+				high = high || functions[reachable[i]].usesHigh;
+				low = low || functions[reachable[i]].usesLow;
+			}
+			if (high)
 			{
 				places.push_back(vector<string>(1, ACC_HIGH));
 				weights[ACC_HIGH] += 1 << 20;		// always in a direct register: no bank between a skip and its instruction
 			}
-			if (usesLowByte)
+			if (low)
 			{
 				places.push_back(vector<string>(1, ACC_LOW));
 				weights[ACC_LOW] += 1 << 20;

@@ -175,10 +175,6 @@ TEST(FunctionsTest, ReturnFromMainEndsTheProgram) {
 
 TEST(FunctionsTest, ReturnInsideALoop) {
     ProgramRun run = runProgram(source(
-        "uint8_t r; uint8_t find(uint8_t limit) { for (uint8_t i = 0; i < 200; i++) { if (i * 1 == limit) return i + 100; } return 0; }",
-        "r = 0;"));
-    ASSERT_FALSE(run.compiled.ok);      // * is not supported yet
-    run = runProgram(source(
         "uint8_t r; uint8_t find(uint8_t limit) { for (uint8_t i = 0; i < 200; i++) { if (i == limit) return i + 100; } return 0; }",
         "r = find(7);"));
     ASSERT_TRUE(run.compiled.ok) << run.compiled.error;

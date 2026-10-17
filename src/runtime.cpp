@@ -1,0 +1,155 @@
+#include "runtime.h"
+
+// Written in the C that xgscc translates, so it must not use * / % itself.
+//
+// The product has the same bits for signed and unsigned values, so there is one
+// routine per size. Division and remainder come in an unsigned and a signed
+// version; the signed ones divide the absolute values, the quotient is negative if
+// the signs differ and the remainder has the sign of the dividend (like C).
+// Dividing by zero gives the largest quotient and the dividend as the remainder.
+// A shift by the number of bits or more gives 0, or the sign for >> of a signed value.
+const char* runtimeSource()
+{
+	return
+		"#include <stdint.h>\n"
+
+		"uint8_t __mul8u(uint8_t a, uint8_t b) {\n"
+		"    uint8_t r = 0;\n"
+		"    while (b) {\n"
+		"        if (b & 1) r += a;\n"
+		"        a <<= 1;\n"
+		"        b >>= 1;\n"
+		"    }\n"
+		"    return r;\n"
+		"}\n"
+
+		"uint16_t __mul16u(uint16_t a, uint16_t b) {\n"
+		"    uint16_t r = 0;\n"
+		"    while (b) {\n"
+		"        if (b & 1) r += a;\n"
+		"        a <<= 1;\n"
+		"        b >>= 1;\n"
+		"    }\n"
+		"    return r;\n"
+		"}\n"
+
+		"uint8_t __div8u(uint8_t n, uint8_t d) {\n"
+		"    uint8_t q = 0;\n"
+		"    uint8_t r = 0;\n"
+		"    for (uint8_t i = 0; i < 8; i++) {\n"
+		"        uint8_t carry = r >> 7;\n"
+		"        r = (r << 1) | (n >> 7);\n"
+		"        n <<= 1;\n"
+		"        q <<= 1;\n"
+		"        if (carry || r >= d) { r -= d; q |= 1; }\n"
+		"    }\n"
+		"    return q;\n"
+		"}\n"
+
+		"uint8_t __mod8u(uint8_t n, uint8_t d) {\n"
+		"    uint8_t r = 0;\n"
+		"    for (uint8_t i = 0; i < 8; i++) {\n"
+		"        uint8_t carry = r >> 7;\n"
+		"        r = (r << 1) | (n >> 7);\n"
+		"        n <<= 1;\n"
+		"        if (carry || r >= d) r -= d;\n"
+		"    }\n"
+		"    return r;\n"
+		"}\n"
+
+		"uint16_t __div16u(uint16_t n, uint16_t d) {\n"
+		"    uint16_t q = 0;\n"
+		"    uint16_t r = 0;\n"
+		"    for (uint8_t i = 0; i < 16; i++) {\n"
+		"        uint8_t carry = r >> 15;\n"
+		"        r = (r << 1) | (n >> 15);\n"
+		"        n <<= 1;\n"
+		"        q <<= 1;\n"
+		"        if (carry || r >= d) { r -= d; q |= 1; }\n"
+		"    }\n"
+		"    return q;\n"
+		"}\n"
+
+		"uint16_t __mod16u(uint16_t n, uint16_t d) {\n"
+		"    uint16_t r = 0;\n"
+		"    for (uint8_t i = 0; i < 16; i++) {\n"
+		"        uint8_t carry = r >> 15;\n"
+		"        r = (r << 1) | (n >> 15);\n"
+		"        n <<= 1;\n"
+		"        if (carry || r >= d) r -= d;\n"
+		"    }\n"
+		"    return r;\n"
+		"}\n"
+
+		"int8_t __div8s(int8_t a, int8_t b) {\n"
+		"    uint8_t negative = 0;\n"
+		"    uint8_t x = a;\n"
+		"    uint8_t y = b;\n"
+		"    if (a < 0) { x = -a; negative = 1; }\n"
+		"    if (b < 0) { y = -b; negative ^= 1; }\n"
+		"    x = __div8u(x, y);\n"
+		"    if (negative) x = -x;\n"
+		"    return x;\n"
+		"}\n"
+
+		"int8_t __mod8s(int8_t a, int8_t b) {\n"
+		"    uint8_t x = a;\n"
+		"    uint8_t y = b;\n"
+		"    if (a < 0) x = -a;\n"
+		"    if (b < 0) y = -b;\n"
+		"    x = __mod8u(x, y);\n"
+		"    if (a < 0) x = -x;\n"
+		"    return x;\n"
+		"}\n"
+
+		"int16_t __div16s(int16_t a, int16_t b) {\n"
+		"    uint8_t negative = 0;\n"
+		"    uint16_t x = a;\n"
+		"    uint16_t y = b;\n"
+		"    if (a < 0) { x = -a; negative = 1; }\n"
+		"    if (b < 0) { y = -b; negative ^= 1; }\n"
+		"    x = __div16u(x, y);\n"
+		"    if (negative) x = -x;\n"
+		"    return x;\n"
+		"}\n"
+
+		"int16_t __mod16s(int16_t a, int16_t b) {\n"
+		"    uint16_t x = a;\n"
+		"    uint16_t y = b;\n"
+		"    if (a < 0) x = -a;\n"
+		"    if (b < 0) y = -b;\n"
+		"    x = __mod16u(x, y);\n"
+		"    if (a < 0) x = -x;\n"
+		"    return x;\n"
+		"}\n"
+
+		"uint8_t __shl8(uint8_t x, uint8_t n) {\n"
+		"    while (n) { x <<= 1; n--; }\n"
+		"    return x;\n"
+		"}\n"
+
+		"uint16_t __shl16(uint16_t x, uint8_t n) {\n"
+		"    while (n) { x <<= 1; n--; }\n"
+		"    return x;\n"
+		"}\n"
+
+		"uint8_t __shr8u(uint8_t x, uint8_t n) {\n"
+		"    while (n) { x >>= 1; n--; }\n"
+		"    return x;\n"
+		"}\n"
+
+		"int8_t __shr8s(int8_t x, uint8_t n) {\n"
+		"    while (n) { x >>= 1; n--; }\n"
+		"    return x;\n"
+		"}\n"
+
+		"uint16_t __shr16u(uint16_t x, uint8_t n) {\n"
+		"    while (n) { x >>= 1; n--; }\n"
+		"    return x;\n"
+		"}\n"
+
+		"int16_t __shr16s(int16_t x, uint8_t n) {\n"
+		"    while (n) { x >>= 1; n--; }\n"
+		"    return x;\n"
+		"}\n";
+}

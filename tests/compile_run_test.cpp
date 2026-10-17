@@ -338,10 +338,6 @@ TEST(CompileErrorTest, GlobalInitializerMustBeConstant) {
     EXPECT_NE(std::string::npos, errorOf("uint8_t a; uint8_t b = a; void main(void) { }").find("not constant"));
 }
 
-TEST(CompileErrorTest, ShiftCountMustBeConstant) {
-    EXPECT_NE(std::string::npos, errorOf(program("uint8_t a; uint8_t n;", "a = a << n;")).find("constant"));
-}
-
 TEST(CompileErrorTest, MainIsRequired) {
     EXPECT_NE(std::string::npos, errorOf("uint8_t a;").find("main"));
 }

@@ -6,8 +6,7 @@ using namespace std;
 
 namespace
 {
-	const char* const ASSIGNMENTS[] = { "=", "+=", "-=", "&=", "|=", "^=", "<<=", ">>=" };
-	const char* const LATER_ASSIGNMENTS[] = { "*=", "/=", "%=" };
+	const char* const ASSIGNMENTS[] = { "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=" };
 	const char* const LATER_STATEMENTS[] = { "switch", "goto", "case", "default" };
 	const char* const OTHER_TYPES[] = {
 		"int", "char", "short", "long", "float", "double", "volatile",
@@ -37,6 +36,7 @@ namespace
 		if (op == "<" || op == ">" || op == "<=" || op == ">=") return 7;
 		if (op == "<<" || op == ">>") return 8;
 		if (op == "+" || op == "-") return 9;
+		if (op == "*" || op == "/" || op == "%") return 10;
 		return 0;
 	}
 
@@ -519,8 +519,6 @@ namespace
 				setTarget(*result, std::move(target));
 				return result;
 			}
-			if (peek().type == Token::OPERATOR && contains(LATER_ASSIGNMENTS, peek().text))
-				throw CompileError(line, "operator '" + peek().text + "' is not supported yet");
 			if (peek().type != Token::OPERATOR || !contains(ASSIGNMENTS, peek().text))
 			{
 				if (target->kind == Expr::VARIABLE)
@@ -544,7 +542,7 @@ namespace
 			if (peek().type == Token::OPERATOR)
 			{
 				const string& op = peek().text;
-				if (contains(ASSIGNMENTS, op) || contains(LATER_ASSIGNMENTS, op))
+				if (contains(ASSIGNMENTS, op))
 					throw CompileError(peek().line, "an assignment is a statement and cannot be used in an expression");
 				if (op == "++" || op == "--")
 					throw CompileError(peek().line, "'" + op + "' is a statement and cannot be used in an expression");
@@ -560,8 +558,6 @@ namespace
 				if (peek().type != Token::OPERATOR)
 					return left;
 				string op = peek().text;
-				if (op == "*" || op == "/" || op == "%")
-					throw CompileError(peek().line, "operator '" + op + "' is not supported yet");
 				int level = precedence(op);
 				if (level < minimum || level == 0)
 					return left;

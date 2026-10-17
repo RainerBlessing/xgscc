@@ -147,9 +147,12 @@ the one before):
    the top of the ROM itself, so no `align` directive was needed; string literals
    also initialize RAM arrays.
    Status: Complete
-5. **3e `*`, `/`, `%` and variable shifts** as runtime routines in assembler, in
-   the program only when used.
-   Status: Not Started
+5. **3e `*`, `/`, `%` and variable shifts** as routines in the runtime, in the
+   program only when used. They are written in C (`src/runtime.cpp`) and compiled by
+   the compiler itself, which was simpler than assembler and is good enough for now;
+   the product is the same for signed and unsigned values, division and remainder
+   have signed versions. Faster hand written versions are a task for stage 5.
+   Status: Complete
 6. **3f `switch` and `struct`.**
    Status: Not Started
 7. **3g `--map`**: where every variable, function and table is, how much RAM
@@ -167,7 +170,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3e next)
+**Status**: In Progress (3f next)
 
 ## Stage 4: the XGS library and the video kernel
 

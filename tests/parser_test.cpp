@@ -84,12 +84,22 @@ TEST(ParserTest, NumbersAndVariablesAreLeaves) {
     EXPECT_EQ("(- 5)", expressionOf("-5"));
 }
 
-TEST(ParserTest, MultiplyDivideModuloAreNotSupportedYet) {
-    for (const char* op : { "*", "/", "%" }) {
-        CompileError error = errorOf(inMain(std::string("a = b ") + op + " 2;"));
-        EXPECT_EQ(2, error.line);
-        EXPECT_NE(std::string::npos, error.message.find(op)) << error.message;
-    }
+TEST(ParserTest, MultiplyDivideModuloBindTighterThanPlus) {
+    EXPECT_EQ("(+ a (* b c))", expressionOf("a + b * c"));
+    EXPECT_EQ("(+ (/ a b) c)", expressionOf("a / b + c"));
+    EXPECT_EQ("(- a (% b c))", expressionOf("a - b % c"));
+    EXPECT_EQ("(* (+ a b) c)", expressionOf("(a + b) * c"));
+}
+
+TEST(ParserTest, MultiplyAssociatesToTheLeftAndBindsTighterThanShift) {
+    EXPECT_EQ("(/ (* a b) c)", expressionOf("a * b / c"));
+    EXPECT_EQ("(<< a (* b 2))", expressionOf("a << b * 2"));
+    EXPECT_EQ("(< (* a b) c)", expressionOf("a * b < c"));
+}
+
+TEST(ParserTest, StarInTheMiddleIsMultiplyAndAtTheStartIsDereference) {
+    EXPECT_EQ("(* a (* b))", expressionOf("a * *b"));
+    EXPECT_EQ("(* (* a) b)", expressionOf("*a * b"));
 }
 
 // statements
@@ -250,9 +260,12 @@ TEST(ParserTest, GarbageAtTheTopLevelIsAnError) {
     EXPECT_EQ(1, errorOf("}").line);
 }
 
-TEST(ParserTest, CompoundAssignmentOfLaterStagesIsNotSupportedYet) {
-    CompileError error = errorOf(inMain("a *= 2;"));
-    EXPECT_NE(std::string::npos, error.message.find("*=")) << error.message;
+TEST(ParserTest, MultiplyDivideModuloAssignments) {
+    Program program = parseSource(inMain("a *= 2; a /= 3; a %= 4;"));
+    const std::vector<StmtPtr>& s = program.functions[0].body->statements;
+    EXPECT_EQ("*=", s[0]->op);
+    EXPECT_EQ("/=", s[1]->op);
+    EXPECT_EQ("%=", s[2]->op);
 }
 
 // functions
@@ -595,8 +608,10 @@ TEST(ParserTest, CannotAssignToAnExpression) {
     EXPECT_NE(std::string::npos, errorOf(inMain("5 = a;")).message.find("statement"));
 }
 
-TEST(ParserTest, IndexedCompoundAssignmentOfLaterStagesIsNotSupportedYet) {
-    EXPECT_NE(std::string::npos, errorOf(inMain("a[1] *= 2;")).message.find("*="));
+TEST(ParserTest, IndexedMultiplyAssignment) {
+    Program program = parseSource(inMain("a[1] *= 2;"));
+    EXPECT_EQ("*=", program.functions[0].body->statements[0]->op);
+    EXPECT_EQ("(index a 1)", toString(*program.functions[0].body->statements[0]->target));
 }
 
 TEST(ParserTest, PointerDeclarationInAFor) {

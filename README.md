@@ -59,10 +59,16 @@ void add(uint8_t value)
   widens the operation if not; `x < 300` for a `uint8_t x` compares as 16 bit.
   Constants are computed exactly, and a shift by the size of the type or more gives 0
   (for `>>` of a signed value 0 or -1).
-- **Expressions**: `+ - & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`, `||`,
-  parentheses, calls, casts, and with pointers `*p`, `&x`, `a[i]`. Shift counts must
-  be constants.
-- **Statements**: assignment with `= += -= &= |= ^= <<= >>=` (also to `*p` and
+- **Expressions**: `+ - * / % & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`,
+  `||`, parentheses, calls, casts, and with pointers `*p`, `&x`, `a[i]`. `*`, `/`, `%`
+  and shifts by a variable amount are calls of small routines that are written in C
+  (`src/runtime.cpp`) and only reach the ROM if the program uses them; they cost
+  from 44 words (`uint8_t` product) to 383 (signed 16 bit quotient), and several
+  hundred cycles. Division is truncating like in C, the remainder has the sign of the
+  dividend; dividing by zero gives no error at run time (the quotient is the
+  largest value, the remainder the dividend). A shift by the number of bits or more
+  gives 0 (the sign for `>>` of a signed value).
+- **Statements**: assignment with `= += -= *= /= %= &= |= ^= <<= >>=` (also to `*p` and
   `a[i]`), `++` and `--` (as statements only, also `(*p)++` and `a[i]--`), calls,
   `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, blocks
   and declarations (also `static` and `const`).
@@ -83,8 +89,7 @@ void add(uint8_t value)
   and not changed. A table holds at most 256 bytes (128 elements of 16 bits), each
   byte takes one ROM word. A string also initializes a RAM array:
   `uint8_t line[] = "ready";`.
-- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, `switch`, `goto`,
-  `struct`. The compiler
+- **Not yet**: `int`/`long`, `switch`, `goto`, `struct`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the
