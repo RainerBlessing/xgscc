@@ -48,8 +48,8 @@ void main(void)                 // the only function
 ## Memory
 
 - The program must fit in the first 512 words (one page).
-- 18 variables: 6 of RAM `0x0E`-`0x1F` after four temporaries at `0x0A`-`0x0D`.
-  Expressions with more than four nested temporaries are refused.
+- 18 variables, at `0x0E`, `0x0F` and `0x10`-`0x1F`. Four temporaries for
+  expressions sit at `0x0A`-`0x0D`; an expression that needs more is refused.
 - The start code (`org fff`, `jmp _start`) selects bank 1 so that `0x10`-`0x1F` is
   RAM, clears or initializes the globals and falls into the code of `main`.
   When `main` ends the program loops on a `jmp` to itself.
