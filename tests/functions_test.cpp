@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include "run_helper.h"
 
@@ -485,4 +487,14 @@ TEST(FunctionsErrorTest, ConstCannotBeAssigned) {
 
 TEST(FunctionsErrorTest, StaticInitializerMustBeConstant) {
     EXPECT_TRUE(contains(errorOf(source("uint8_t v; void f(void) { static uint8_t s = v; }", "f();")), "constant"));
+}
+
+TEST(FunctionsTest, TheFunctionsExample) {
+    std::ifstream file(EXAMPLES_DIR "/functions.c");
+    std::stringstream text;
+    text << file.rdbuf();
+    ProgramRun run = runProgram(text.str());
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_FALSE(run.halted);       // main ends in an endless loop
+    EXPECT_EQ(100, run.value("total"));     // 1 + 3 + ... + 19
 }
