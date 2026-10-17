@@ -58,6 +58,7 @@ namespace
 	const int BANKED_FIRST = 0x10;			// banks 1-7
 	const int BANKED_LAST = 0x7f;
 	const char* const ACC_HIGH = "acc_hi";		// the high byte of a 16 bit result
+	const char* const ACC_LOW = "acc_lo";		// holds a value while FSR points somewhere
 
 	const Type U8(1, false);
 	const Type I8(1, true);
@@ -66,12 +67,22 @@ namespace
 
 	struct Variable
 	{
-		Variable() : isConst(false), value(0) {}
-		Type type;
+		Variable() : isConst(false), value(0), isArray(false), count(0) {}
+		Type type;		// of an array: of its elements
 		string lo;		// the names in the assembler source
 		string hi;		// of a 16 bit variable
 		bool isConst;		// a constant, takes no RAM
 		long value;
+		bool isArray;		// lo is the physical address of the first element
+		int count;		// elements of an array
+	};
+
+	// RAM that has to be one run of addresses: an array, or a 16 bit variable whose address is taken
+	struct Block
+	{
+		string label;		// an array: its name; a 16 bit variable: its low byte
+		string high;		// a 16 bit variable: its high byte
+		int bytes;
 	};
 
 	struct ParameterLabels
@@ -96,6 +107,7 @@ namespace
 		vector<ParameterLabels> parameterLabels;
 		vector<string> localLabels;
 		vector<string> staticLabels;
+		vector<Block> blocks;	// arrays: they keep their place, the frames of functions are shared
 		int temporaries;	// the most that were in use at a time
 		map<string, int> calls;	// the functions called -> line of the first call
 		ostringstream code;
@@ -221,9 +233,10 @@ namespace
 	class Generator
 	{
 	public:
-		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), loopDepth(0), temporariesInUse(0), nextLabel(0)
+		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), loopDepth(0), temporariesInUse(0), nextLabel(0)
 		{
 			allocatable.insert(ACC_HIGH);
+			allocatable.insert(ACC_LOW);
 		}
 
 		string run(const Program& program, map<string, int>* globals, map<string, int>* highBytes)
@@ -259,6 +272,10 @@ namespace
 		set<string> allocatable;		// labels of variables and temporaries
 		map<string, int> weights;		// how much each of them is used
 		bool usesHighByte;
+		bool usesLowByte;
+		map<string, string> addressTaken;	// low byte of a variable whose address is taken -> its high byte, if it has one
+		vector<Block> globalBlocks;
+		set<string> arrayLabels;		// the addresses of arrays are no registers
 		int loopDepth;
 		int temporariesInUse;
 		int nextLabel;
@@ -303,10 +320,6 @@ namespace
 				info.returnsValue = function.returnsValue;
 				info.returnType = function.returnType;
 				info.parameters = function.parameters;
-				if (function.returnsValue)
-					refusePointers(function.returnType, function.line);
-				for (size_t i = 0; i < function.parameters.size(); i++)
-					refusePointers(function.parameters[i].type, function.parameters[i].line);
 				info.entry = "f_" + function.name;
 				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
 				return info;
@@ -348,17 +361,18 @@ namespace
 			return "v_" + (current != NULL ? current->name + "_" : string()) + name;
 		}
 
-		static void refusePointers(const Type& type, int line)
+		// a name that is no register: the address of an array
+		string newPlainLabel(const string& wanted)
 		{
-			if (type.isPointer)
-				throw CompileError(line, "pointers are not supported by the code generator yet");
+			string label = wanted;
+			while (usedLabels.count(label))
+				label += "_";
+			usedLabels.insert(label);
+			return label;
 		}
 
 		Variable declare(const Stmt& declaration)
 		{
-			refusePointers(declaration.type, declaration.line);
-			if (declaration.arraySize != 0)
-				throw CompileError(declaration.line, "arrays are not supported by the code generator yet");
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
@@ -373,6 +387,12 @@ namespace
 				variable.isConst = true;
 				variable.value = wrapTo(value, declaration.type);
 			}
+			else if (declaration.arraySize != 0)
+			{
+				variable.isArray = true;
+				variable.count = declaration.arraySize;
+				variable.lo = newPlainLabel(variableLabel(declaration.name));
+			}
 			else
 			{
 				variable.lo = newLabel(variableLabel(declaration.name));
@@ -381,6 +401,12 @@ namespace
 			}
 			scope[declaration.name] = variable;
 			return variable;
+		}
+
+		// the type a variable has in an expression: an array is the address of its first element
+		static Type valueType(const Variable& variable)
+		{
+			return variable.isArray ? pointerTo(variable.type) : variable.type;
 		}
 
 		const Variable& lookup(const string& name, int line) const
@@ -405,7 +431,10 @@ namespace
 
 		bool isPlainVariable(const Expr& expr) const
 		{
-			return expr.kind == Expr::VARIABLE && !lookup(expr.name, expr.line).isConst;
+			if (expr.kind != Expr::VARIABLE)
+				return false;
+			const Variable& variable = lookup(expr.name, expr.line);
+			return !variable.isConst && !variable.isArray;
 		}
 
 		static void checkFits(long value, const Type& type, int line)
@@ -414,12 +443,40 @@ namespace
 				throw CompileError(line, "the constant " + decimal(value) + " does not fit in " + typeName(type));
 		}
 
+		// writes pseudo lines ("@..."), labels ("name:") and instructions
+		void writeLines(ostringstream& out, const vector<string>& lines)
+		{
+			for (size_t i = 0; i < lines.size(); i++)
+			{
+				const string& line = lines[i];
+				if (line[0] == '@')
+					out << "        " << line << "\n";
+				else if (line[line.size() - 1] == ':')
+					out << line << "\n";
+				else
+					out << instructionLines(line);
+			}
+		}
+
 		// start code that gives a variable with its own address its first value
 		void initialize(ostringstream& out, const Stmt& declaration, const Variable& variable)
 		{
+			if (variable.isArray)
+			{
+				writeLines(out, arrayInitialization(declaration, variable));
+				return;
+			}
 			long value = 0;
 			if (declaration.expr && !fold(*declaration.expr, &value))
+			{
+				vector<string> lines;
+				if (variable.type.isPointer && pointerInitialization(*declaration.expr, variable, &lines))
+				{
+					writeLines(out, lines);
+					return;
+				}
 				throw CompileError(declaration.line, "the initializer of '" + declaration.name + "' is not constant");
+			}
 			checkFits(value, variable.type, declaration.line);
 			value = wrapTo(value, variable.type);
 			initializeByte(out, variable.lo, value & 0xff);
@@ -435,19 +492,139 @@ namespace
 				out << instructionLines("mov w, #" + hexText(value)) << instructionLines("mov " + label + ", w");
 		}
 
+		// The address an array or variable or element has in a pointer that is
+		// initialized: a name, &name or &name[constant]. Only W and acc_hi are used.
+		bool pointerInitialization(const Expr& expr, const Variable& pointer, vector<string>* lines)
+		{
+			const Expr* target = &expr;
+			if (expr.kind == Expr::UNARY && expr.name == "&")
+				target = expr.left.get();
+			else if (!(expr.kind == Expr::VARIABLE && lookup(expr.name, expr.line).isArray))
+				return false;
+			long offset = 0;
+			int elementSize = 1;
+			if (target->kind == Expr::INDEX)
+			{
+				if (!fold(*target->right, &offset) || target->left->kind != Expr::VARIABLE)
+					return false;
+				const Variable& array = lookup(target->left->name, target->left->line);
+				if (!array.isArray)
+					return false;
+				elementSize = array.type.size;
+				target = target->left.get();
+			}
+			if (target->kind != Expr::VARIABLE)
+				return false;
+			const Variable& variable = lookup(target->name, target->line);
+			if (variable.isConst)
+				return false;
+			if (offset != 0)
+			{
+				lines->push_back("mov w, #" + hexText((offset * elementSize) & 0xff));
+				lines->push_back("mov " + accHigh() + ", w");
+			}
+			lines->push_back("mov w, #" + (variable.isArray ? variable.lo : takeAddress(variable)));
+			if (offset != 0)
+				lines->push_back("add w, " + accHigh());
+			lines->push_back("mov " + pointer.lo + ", w");
+			return true;
+		}
+
+		// The name of the physical address of a variable that is no array. A 16
+		// bit variable needs both bytes next to each other then.
+		string takeAddress(const Variable& variable)
+		{
+			addressTaken[variable.lo] = variable.hi;
+			return variable.lo + "_addr";
+		}
+
+		// the code that writes the elements of an array: FSR walks along it
+		vector<string> arrayInitialization(const Stmt& declaration, const Variable& variable)
+		{
+			int size = variable.type.size;
+			vector<int> bytes;
+			for (int i = 0; i < variable.count; i++)
+			{
+				long value = 0;
+				if (i < (int) declaration.elements.size())
+				{
+					const Expr& element = *declaration.elements[i];
+					if (!fold(element, &value))
+						throw CompileError(element.line, "the initializer of the array '" + declaration.name + "' is not constant");
+					checkFits(value, variable.type, element.line);
+					value = wrapTo(value, variable.type);
+				}
+				bytes.push_back((int) (value & 0xff));
+				if (size == 2)
+					bytes.push_back((int) ((value >> 8) & 0xff));
+			}
+			vector<string> lines;
+			lines.push_back("@indirect");
+			lines.push_back("mov w, #" + variable.lo);
+			lines.push_back("mov fsr, w");
+			for (size_t i = 0; i < bytes.size();)
+			{
+				size_t run = 0;
+				while (i + run < bytes.size() && bytes[i + run] == 0)
+					run++;
+				if (run >= 8)
+				{
+					// a loop clears the run; acc_hi counts, nothing else is in use here
+					string loop = newJumpLabel();
+					lines.push_back("mov w, #" + hexText((long) min(run, (size_t) 255)));
+					lines.push_back("mov " + accHigh() + ", w");
+					lines.push_back(loop + ":");
+					lines.push_back("clr indf");
+					lines.push_back("inc fsr");
+					lines.push_back("decsz " + accHigh());
+					lines.push_back("jmp " + loop);
+					i += min(run, (size_t) 255);
+					continue;
+				}
+				if (bytes[i] == 0)
+					lines.push_back("clr indf");
+				else
+				{
+					lines.push_back("mov w, #" + hexText(bytes[i]));
+					lines.push_back("mov indf, w");
+				}
+				i++;
+				if (i < bytes.size())
+					lines.push_back("inc fsr");
+			}
+			lines.push_back("@done");
+			return lines;
+		}
+
 		void declareGlobal(const Stmt& declaration)
 		{
 			Variable variable = declare(declaration);
 			if (variable.isConst)
 				return;
-			uniqueLabels.push_back(variable.lo);
-			globalLabels[declaration.name] = variable.lo;
-			if (variable.type.size == 2)
+			if (variable.isArray)
 			{
-				uniqueLabels.push_back(variable.hi);
-				globalHighLabels[declaration.name] = variable.hi;
+				globalBlocks.push_back(blockOf(variable));
+				globalLabels[declaration.name] = variable.lo;
+			}
+			else
+			{
+				uniqueLabels.push_back(variable.lo);
+				globalLabels[declaration.name] = variable.lo;
+				if (variable.type.size == 2)
+				{
+					uniqueLabels.push_back(variable.hi);
+					globalHighLabels[declaration.name] = variable.hi;
+				}
 			}
 			initialize(initialization, declaration, variable);
+		}
+
+		static Block blockOf(const Variable& variable)
+		{
+			Block block;
+			block.label = variable.lo;
+			block.bytes = variable.count * variable.type.size;
+			return block;
 		}
 
 		void localDeclaration(const Stmt& stmt)
@@ -455,6 +632,15 @@ namespace
 			Variable variable = declare(stmt);
 			if (variable.isConst)
 				return;
+			if (variable.isArray)
+			{
+				current->blocks.push_back(blockOf(variable));
+				if (stmt.isStatic)
+					initialize(current->initialization, stmt, variable);
+				else if (!stmt.elements.empty())
+					writeLines(current->code, arrayInitialization(stmt, variable));
+				return;
+			}
 			vector<string>& labels = stmt.isStatic ? current->staticLabels : current->localLabels;
 			labels.push_back(variable.lo);
 			if (variable.type.size == 2)
@@ -521,6 +707,8 @@ namespace
 				weights[used] += weight;
 				if (used == ACC_HIGH)
 					usesHighByte = true;
+				if (used == ACC_LOW)
+					usesLowByte = true;
 				lines += "        @bank " + used + "\n";
 			}
 			return lines + "        " + instruction + "\n";
@@ -558,22 +746,21 @@ namespace
 				return variable.isConst;
 			}
 			case Expr::CALL:
+			case Expr::INDEX:
+			case Expr::INDIRECT:
 				return false;
 			case Expr::CAST:
 			{
-				refusePointers(expr.type, expr.line);
 				long operand;
 				if (!fold(*expr.left, &operand))
 					return false;
 				*value = wrapTo(operand, expr.type);
 				return true;
 			}
-			case Expr::INDEX:
-				throw CompileError(expr.line, "arrays are not supported by the code generator yet");
 			case Expr::UNARY:
 			{
 				if (expr.name == "*" || expr.name == "&")
-					throw CompileError(expr.line, "pointers are not supported by the code generator yet");
+					return false;
 				long operand;
 				if (!fold(*expr.left, &operand))
 					return false;
@@ -626,20 +813,22 @@ namespace
 
 		bool isSimple(const Expr& expr) const
 		{
-			return expr.kind == Expr::VARIABLE || isConstant(expr);
+			return isPlainVariable(expr) || isConstant(expr);
 		}
 
 		// types
 
 		Type typeOf(const Expr& expr)
 		{
+			if (expr.kind == Expr::CAST)
+				return expr.type;
 			long value;
 			if (fold(expr, &value))
 				return constantType(value, expr.line);
 			switch (expr.kind)
 			{
 			case Expr::VARIABLE:
-				return lookup(expr.name, expr.line).type;
+				return valueType(lookup(expr.name, expr.line));
 			case Expr::CALL:
 			{
 				FunctionInfo& callee = lookupFunction(expr.name, expr.line);
@@ -647,35 +836,114 @@ namespace
 					throw CompileError(expr.line, "function '" + callee.name + "' returns no value");
 				return callee.returnType;
 			}
-			case Expr::CAST:
+			case Expr::INDIRECT:
 				return expr.type;
+			case Expr::INDEX:
+				return pointee(typeOf(*expr.left), expr.line, "only arrays and pointers can be indexed");
 			case Expr::UNARY:
-				return expr.name == "!" ? U8 : typeOf(*expr.left);
+				if (expr.name == "!")
+					return U8;
+				if (expr.name == "*")
+					return pointee(typeOf(*expr.left), expr.line, "cannot dereference a value that is no pointer");
+				if (expr.name == "&")
+					return addressType(*expr.left, expr.line);
+				return noPointer(typeOf(*expr.left), expr.name, expr.line);
 			default:
 				if (isComparison(expr.name) || isLogical(expr.name))
 					return U8;
 				if (expr.name == "<<" || expr.name == ">>")
-					return typeOf(*expr.left);
+					return noPointer(typeOf(*expr.left), expr.name, expr.line);
+				{
+					Type a = typeOf(*expr.left);
+					Type b = typeOf(*expr.right);
+					if (a.isPointer || b.isPointer)
+						return pointerResult(expr.name, a, b, expr.line);
+				}
 				return operationType(*expr.left, *expr.right, false);
 			}
+		}
+
+		static Type pointee(const Type& type, int line, const string& message)
+		{
+			if (!type.isPointer)
+				throw CompileError(line, message + " (it is " + typeName(type) + ")");
+			return type.pointee();
+		}
+
+		static Type noPointer(const Type& type, const string& op, int line)
+		{
+			if (type.isPointer)
+				throw CompileError(line, "the operator '" + op + "' cannot be used on a pointer");
+			return type;
+		}
+
+		// the type of an operation with a pointer: pointer + number, pointer - number
+		static Type pointerResult(const string& op, const Type& a, const Type& b, int line)
+		{
+			if (op == "+" && a.isPointer != b.isPointer)
+				return a.isPointer ? a : b;
+			if (op == "-" && a.isPointer && !b.isPointer)
+				return a;
+			if (a.isPointer && b.isPointer && (op == "+" || op == "-"))
+				throw CompileError(line, op == "+" ? "two pointers cannot be added" : "the difference of two pointers is not supported yet");
+			throw CompileError(line, "the operator '" + op + "' cannot be used on a pointer");
+		}
+
+		// the type of &operand: a pointer to a variable, an element or what a pointer points to
+		Type addressType(const Expr& operand, int line)
+		{
+			switch (operand.kind)
+			{
+			case Expr::VARIABLE:
+			{
+				const Variable& variable = lookup(operand.name, operand.line);
+				if (variable.isConst)
+					throw CompileError(line, "cannot take the address of the const '" + operand.name + "'");
+				return pointerTo(variable.type);
+			}
+			case Expr::INDEX:
+				return pointerTo(typeOf(operand));
+			case Expr::UNARY:
+				if (operand.name == "*")
+				{
+					Type pointer = typeOf(*operand.left);
+					pointee(pointer, line, "cannot dereference a value that is no pointer");
+					return pointer;
+				}
+				break;
+			default:
+				break;
+			}
+			throw CompileError(line, "cannot take the address of this expression");
+		}
+
+		// A constant without a type of its own: it takes the type of the other
+		// operand. A cast gives a constant its type.
+		bool isUntypedConstant(const Expr& expr, long* value) const
+		{
+			return expr.kind != Expr::CAST && fold(expr, value);
 		}
 
 		// The type an operation on a and b is done in. A constant takes the type of
 		// the other operand if it fits; arithmetic is modular, so it may be a
 		// negative constant for an unsigned type. A comparison is exact: the
-		// operation is widened until it holds both.
+		// operation is widened until it holds both. Addresses compare as numbers.
 		Type operationType(const Expr& a, const Expr& b, bool isComparisonOperation)
 		{
 			long constantA, constantB;
-			bool aIsConstant = fold(a, &constantA);
-			bool bIsConstant = fold(b, &constantB);
+			bool aIsConstant = isUntypedConstant(a, &constantA);
+			bool bIsConstant = isUntypedConstant(b, &constantB);
 			if (aIsConstant && bIsConstant)
 				return commonType(constantType(constantA, a.line), constantType(constantB, b.line));
+			Type typeA = aIsConstant ? U8 : typeOf(a);
+			Type typeB = bIsConstant ? U8 : typeOf(b);
+			if (typeA.isPointer || typeB.isPointer)
+				return U8;
 			if (aIsConstant)
-				return withConstant(typeOf(b), constantA, a.line, isComparisonOperation);
+				return withConstant(typeB, constantA, a.line, isComparisonOperation);
 			if (bIsConstant)
-				return withConstant(typeOf(a), constantB, b.line, isComparisonOperation);
-			return commonType(typeOf(a), typeOf(b));
+				return withConstant(typeA, constantB, b.line, isComparisonOperation);
+			return commonType(typeA, typeB);
 		}
 
 		static Type withConstant(const Type& type, long constant, int line, bool isComparisonOperation)
@@ -693,6 +961,12 @@ namespace
 		{
 			usesHighByte = true;
 			return ACC_HIGH;
+		}
+
+		string accLow()
+		{
+			usesLowByte = true;
+			return ACC_LOW;
 		}
 
 		// W (and acc_hi) = the constant, of the size of the type
@@ -794,6 +1068,9 @@ namespace
 			Type produced = expression(expr);
 			if (produced != planned)
 				throw CompileError(expr.line, "internal error: the type of an expression is " + typeName(produced) + ", not " + typeName(planned));
+			if (produced.isPointer && type.isPointer && produced.pointeeSize != type.pointeeSize)
+				throw CompileError(expr.line, "pointers to " + typeName(produced.pointee()) + " and " + typeName(type.pointee()) +
+					" are not compatible, use a cast");
 			convert(produced, type, expr.line);
 		}
 
@@ -823,6 +1100,12 @@ namespace
 		// W (and acc_hi) = the expression, in its own type, which is returned
 		Type expression(const Expr& expr)
 		{
+			if (expr.kind == Expr::CAST)
+			{
+				Type from = expression(*expr.left);
+				convert(from, expr.type, expr.line);
+				return expr.type;
+			}
 			long value;
 			if (fold(expr, &value))
 			{
@@ -835,22 +1118,172 @@ namespace
 			case Expr::VARIABLE:
 			{
 				const Variable& variable = lookup(expr.name, expr.line);
+				if (variable.isArray)
+				{
+					emit("mov w, #" + variable.lo);		// the address of the first element
+					return valueType(variable);
+				}
 				loadVariable(variable);
 				return variable.type;
 			}
 			case Expr::CALL:
 				return call(expr, true);
-			case Expr::CAST:
-			{
-				Type from = expression(*expr.left);
-				convert(from, expr.type, expr.line);
+			case Expr::INDIRECT:
+				emit("mov w, " + expr.name);
+				loadThrough(expr.type);
 				return expr.type;
+			case Expr::INDEX:
+			{
+				Type element = typeOf(expr);
+				addressOfElement(*expr.left, *expr.right, expr.line);
+				loadThrough(element);
+				return element;
 			}
 			case Expr::UNARY:
+				if (expr.name == "*")
+				{
+					Type element = typeOf(expr);
+					expressionAs(*expr.left, typeOf(*expr.left));
+					loadThrough(element);
+					return element;
+				}
+				if (expr.name == "&")
+					return addressOf(expr);
 				return unaryExpression(expr);
 			default:
 				return binaryExpression(expr);
 			}
+		}
+
+		// pointers
+
+		void marker(const string& text)
+		{
+			current->code << "        " << text << "\n";
+		}
+
+		// W = the value at the address in W (and acc_hi for 16 bits). Only direct
+		// registers are used while FSR points there: a bank instruction would
+		// change FSR.
+		void loadThrough(const Type& element)
+		{
+			marker("@indirect");
+			emit("mov fsr, w");
+			emit("mov w, indf");
+			if (element.size == 2)
+			{
+				emit("mov " + accLow() + ", w");
+				emit("inc fsr");
+				emit("mov w, indf");
+				emit("mov " + accHigh() + ", w");
+				emit("mov w, " + accLow());
+			}
+			marker("@done");
+		}
+
+		// The value in W (and acc_hi) goes to the address in the temporary. FSR
+		// is set last, with only direct registers left.
+		void storeThrough(const string& addressTemporary, const Type& element)
+		{
+			emit("mov " + accLow() + ", w");
+			emit("mov w, " + addressTemporary);
+			marker("@indirect");
+			emit("mov fsr, w");
+			emit("mov w, " + accLow());
+			emit("mov indf, w");
+			if (element.size == 2)
+			{
+				emit("inc fsr");
+				emit("mov w, " + accHigh());
+				emit("mov indf, w");
+			}
+			marker("@done");
+		}
+
+		// W = the offset of an element: the index, times 2 for 16 bit elements. An
+		// address has 8 bits, only the low byte of the index counts.
+		void scaledOffset(const Expr& index, int elementSize, int line)
+		{
+			expressionAs(index, U8);
+			if (elementSize == 2)
+			{
+				int t = allocateTemporary(line);
+				emit("mov " + temporary(t) + ", w");
+				emit("clrb status.0");
+				emit("rl " + temporary(t));
+				emit("mov w, " + temporary(t));
+				freeTemporary();
+			}
+		}
+
+		// W = the address of base[index]
+		void addressOfElement(const Expr& base, const Expr& index, int line)
+		{
+			Type baseType = typeOf(base);
+			pointee(baseType, line, "only arrays and pointers can be indexed");
+			long constantIndex;
+			if (fold(index, &constantIndex) && constantIndex == 0)
+			{
+				expressionAs(base, baseType);
+				return;
+			}
+			scaledOffset(index, baseType.pointeeSize, line);
+			int t = allocateTemporary(line);
+			emit("mov " + temporary(t) + ", w");
+			expressionAs(base, baseType);
+			emit("add w, " + temporary(t));
+			freeTemporary();
+		}
+
+		// W = the address of what *p or p[i] names
+		void lvalueAddress(const Expr& target)
+		{
+			if (target.kind == Expr::INDEX)
+				addressOfElement(*target.left, *target.right, target.line);
+			else
+				expressionAs(*target.left, typeOf(*target.left));
+		}
+
+		// W = &operand
+		Type addressOf(const Expr& expr)
+		{
+			Type result = typeOf(expr);
+			const Expr& operand = *expr.left;
+			if (operand.kind == Expr::VARIABLE)
+			{
+				const Variable& variable = lookup(operand.name, operand.line);
+				emit("mov w, #" + (variable.isArray ? variable.lo : takeAddress(variable)));
+			}
+			else
+				lvalueAddress(operand);
+			return result;
+		}
+
+		// W = pointer + number or pointer - number, the number counts elements
+		Type pointerArithmetic(const string& op, const Expr& a, const Expr& b, int line)
+		{
+			Type typeA = typeOf(a);
+			Type typeB = typeOf(b);
+			Type result = pointerResult(op, typeA, typeB, line);
+			const Expr& pointer = typeA.isPointer ? a : b;
+			const Expr& offset = typeA.isPointer ? b : a;
+			int t = allocateTemporary(line);
+			if (op == "-")
+			{
+				expressionAs(pointer, result);
+				emit("mov " + temporary(t) + ", w");
+				scaledOffset(offset, result.pointeeSize, line);
+				emit("mov w, " + temporary(t) + "-w");
+			}
+			else
+			{
+				scaledOffset(offset, result.pointeeSize, line);
+				emit("mov " + temporary(t) + ", w");
+				expressionAs(pointer, result);
+				emit("add w, " + temporary(t));
+			}
+			freeTemporary();
+			return result;
 		}
 
 		// W = ~value. "xor w, #ff" cannot be used: its opcode 0xFFF is what the
@@ -885,6 +1318,7 @@ namespace
 				booleanValue(expr);
 				return U8;
 			}
+			noPointer(typeOf(*expr.left), expr.name, expr.line);
 			Type type = complement(*expr.left, expr.line);
 			if (expr.name == "-")
 			{
@@ -919,6 +1353,8 @@ namespace
 		{
 			if (op == "<<" || op == ">>")
 				return shift(op, a, b, line);
+			if (typeOf(a).isPointer || typeOf(b).isPointer)
+				return pointerArithmetic(op, a, b, line);
 			Type type = operationType(a, b, false);
 			if (type.size == 2)
 			{
@@ -1068,7 +1504,7 @@ namespace
 				throw CompileError(line, "the shift count must be constant");
 			if (count < 0)
 				throw CompileError(line, "the shift count " + decimal(count) + " is negative");
-			Type type = typeOf(valueExpr);
+			Type type = noPointer(typeOf(valueExpr), op, line);
 			expressionAs(valueExpr, type);
 			if (count == 0)
 				return type;
@@ -1391,11 +1827,14 @@ namespace
 				localDeclaration(stmt);
 				break;
 			case Stmt::ASSIGNMENT:
+				if (stmt.target)
+					assignThrough(stmt);
+				else
+					assignment(stmt);
+				break;
 			case Stmt::STEP:
 				if (stmt.target)
-					throw CompileError(stmt.line, "pointers and arrays are not supported by the code generator yet");
-				if (stmt.kind == Stmt::ASSIGNMENT)
-					assignment(stmt);
+					stepThrough(stmt);
 				else
 					step(stmt);
 				break;
@@ -1455,6 +1894,8 @@ namespace
 		void assignment(const Stmt& stmt)
 		{
 			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			if (variable.isArray)
+				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be assigned to");
 			if (stmt.op == "=")
 			{
 				storeExpression(variable.lo, variable.hi, variable.type, *stmt.expr);
@@ -1472,10 +1913,14 @@ namespace
 		void step(const Stmt& stmt)
 		{
 			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			if (variable.isArray)
+				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be changed");
 			bool increment = stmt.op == "++";
 			if (variable.type.size == 1)
 			{
-				emit(string(increment ? "inc " : "dec ") + variable.lo);
+				int times = variable.type.isPointer ? variable.type.pointeeSize : 1;
+				for (int i = 0; i < times; i++)
+					emit(string(increment ? "inc " : "dec ") + variable.lo);
 				return;
 			}
 			if (increment)
@@ -1491,6 +1936,71 @@ namespace
 				emit("sb status.0");		// a borrow
 				emit("dec " + variable.hi);
 			}
+		}
+
+		// *p = value, a[i] = value, and with an operator: a[i] += value
+		void assignThrough(const Stmt& stmt)
+		{
+			Type element = typeOf(*stmt.target);
+			string op = stmt.op.substr(0, stmt.op.size() - 1);
+			changeThrough(*stmt.target, element, op, *stmt.expr, stmt.line);
+		}
+
+		// *p++ and a[i]-- change the element by one
+		void stepThrough(const Stmt& stmt)
+		{
+			Type element = typeOf(*stmt.target);
+			Expr one(Expr::NUMBER, stmt.line);
+			one.value = 1;
+			changeThrough(*stmt.target, element, stmt.op == "++" ? "+" : "-", one, stmt.line);
+		}
+
+		// the element = value (op empty), or the element = element op value
+		void changeThrough(const Expr& target, const Type& element, const string& op, const Expr& value, int line)
+		{
+			long constant;
+			if (op.empty() && fold(value, &constant))
+			{
+				// FSR first, then the constant goes straight in
+				checkFits(constant, element, value.line);
+				constant = wrapTo(constant, element);
+				lvalueAddress(target);
+				marker("@indirect");
+				emit("mov fsr, w");
+				writeConstantThrough(constant & 0xff);
+				if (element.size == 2)
+				{
+					emit("inc fsr");
+					writeConstantThrough((constant >> 8) & 0xff);
+				}
+				marker("@done");
+				return;
+			}
+			lvalueAddress(target);
+			Operand address = spill(U8, line);
+			if (op.empty())
+				expressionAs(value, element);
+			else
+			{
+				Expr loaded(Expr::INDIRECT, line);
+				loaded.name = address.lo;
+				loaded.type = element;
+				Type type = arithmetic(op, loaded, value, line);
+				convert(type, element, line);
+			}
+			storeThrough(address.lo, element);
+			release(address);
+		}
+
+		void writeConstantThrough(long byte)
+		{
+			if (byte == 0)
+			{
+				emit("clr indf");
+				return;
+			}
+			emit("mov w, #" + hexText(byte));
+			emit("mov indf, w");
 		}
 
 		void returnStatement(const Stmt& stmt)
@@ -1683,6 +2193,7 @@ namespace
 			vector<vector<string> > places;
 			for (size_t i = 0; i < uniqueLabels.size(); i++)
 				places.push_back(vector<string>(1, uniqueLabels[i]));
+			vector<Block> blocks = globalBlocks;
 			for (size_t i = 0; i < reachable.size(); i++)
 			{
 				const FunctionInfo& function = functions[reachable[i]];
@@ -1694,11 +2205,17 @@ namespace
 				}
 				for (size_t p = 0; p < function.staticLabels.size(); p++)
 					places.push_back(vector<string>(1, function.staticLabels[p]));
+				blocks.insert(blocks.end(), function.blocks.begin(), function.blocks.end());
 			}
 			if (usesHighByte)
 			{
 				places.push_back(vector<string>(1, ACC_HIGH));
 				weights[ACC_HIGH] += 1 << 20;		// always in a direct register: no bank between a skip and its instruction
+			}
+			if (usesLowByte)
+			{
+				places.push_back(vector<string>(1, ACC_LOW));
+				weights[ACC_LOW] += 1 << 20;
 			}
 			size_t uniquePlaces = places.size();
 
@@ -1736,12 +2253,56 @@ namespace
 					places[place++].push_back("t_" + function.name + "_" + decimal(t));
 			}
 
+			// 16 bit variables whose address is taken need their two bytes next to each other
+			set<string> moved;
+			for (map<string, string>::const_iterator taken = addressTaken.begin(); taken != addressTaken.end(); ++taken)
+			{
+				if (taken->second.empty() || !isPlaced(places, taken->first))
+					continue;
+				Block block;
+				block.label = taken->first;
+				block.high = taken->second;
+				block.bytes = 2;
+				blocks.push_back(block);
+				moved.insert(taken->first);
+				moved.insert(taken->second);
+			}
+			vector<vector<string> > kept;
+			for (size_t p = 0; p < places.size(); p++)
+			{
+				vector<string> labels;
+				for (size_t l = 0; l < places[p].size(); l++)
+				{
+					if (!moved.count(places[p][l]))
+						labels.push_back(places[p][l]);
+				}
+				if (!labels.empty())
+					kept.push_back(labels);
+			}
+			places = kept;
+
+			int blockBytes = 0;
+			for (size_t i = 0; i < blocks.size(); i++)
+				blockBytes += blocks[i].bytes;
 			int available = (DIRECT_LAST - DIRECT_FIRST + 1) + (BANKED_LAST - BANKED_FIRST + 1);
-			int needed = (int) places.size();
-			if (needed > available)
+			int needed = (int) places.size() + blockBytes;
+			if (needed > available || blockBytes > BANKED_LAST - BANKED_FIRST + 1)
 				throw CompileError(mainFunction->line, "out of RAM: " + decimal(needed) + " bytes needed, " + decimal(available) +
-					" available (" + decimal((long) uniquePlaces) + " for globals, parameters and static variables, " +
-					decimal(frames) + " for local variables and temporaries)");
+					" available (" + decimal((long) places.size()) + " for variables, parameters and temporaries, " +
+					decimal(blockBytes) + " for arrays; arrays have to fit in the banks, which hold " +
+					decimal(BANKED_LAST - BANKED_FIRST + 1) + ")");
+
+			// the blocks sit at the end of the banks, one run each
+			int cursor = BANKED_LAST + 1;
+			for (size_t i = 0; i < blocks.size(); i++)
+			{
+				cursor -= blocks[i].bytes;
+				(*addresses)[blocks[i].label] = cursor;
+				if (!blocks[i].high.empty())
+					(*addresses)[blocks[i].high] = cursor + 1;
+				if (blocks[i].high.empty())
+					arrayLabels.insert(blocks[i].label);
+			}
 
 			// the most used places first: they get the direct registers, then the first bank
 			vector<int> addressesInOrder;
@@ -1766,6 +2327,16 @@ namespace
 			}
 		}
 
+		static bool isPlaced(const vector<vector<string> >& places, const string& label)
+		{
+			for (size_t p = 0; p < places.size(); p++)
+			{
+				if (find(places[p].begin(), places[p].end(), label) != places[p].end())
+					return true;
+			}
+			return false;
+		}
+
 		// The register an instruction names for the RAM address: banked bytes
 		// are 0x10-0x1F of the selected bank.
 		static int registerOf(int address)
@@ -1786,15 +2357,24 @@ namespace
 			string previous;
 			int bank = -1;
 			bool unknownAfterNext = false;
+			bool indirect = false;		// FSR points to the data: no bank instruction may change it
 			while (getline(in, line))
 			{
 				size_t first = line.find_first_not_of(' ');
 				string trimmed = first == string::npos ? "" : line.substr(first);
+				if (trimmed == "@indirect" || trimmed == "@done")
+				{
+					indirect = trimmed == "@indirect";
+					bank = -1;		// FSR is a pointer now or was one
+					continue;
+				}
 				if (trimmed.compare(0, 6, "@bank ") == 0)
 				{
 					int address = addresses.at(trimmed.substr(6));
 					if (address >= BANKED_FIRST && bank != address / 16)
 					{
+						if (indirect)
+							throw CompileError(0, "internal error: " + trimmed.substr(6) + " is used while FSR points to data");
 						bank = address / 16;
 						out << "        bank " << hexText(bank) << "\n";
 						if (previous.compare(0, 3, "sb ") == 0 || previous.compare(0, 4, "snb ") == 0)
@@ -1821,7 +2401,13 @@ namespace
 		{
 			ostringstream out;
 			for (map<string, int>::const_iterator a = addresses.begin(); a != addresses.end(); ++a)
-				out << a->first << " equ " << hexText(registerOf(a->second)) << "\n";
+			{
+				// an array is named by its address, a variable by its register
+				bool isArray = arrayLabels.count(a->first) != 0;
+				out << a->first << " equ " << hexText(isArray ? a->second : registerOf(a->second)) << "\n";
+				if (addressTaken.count(a->first))
+					out << a->first << "_addr equ " << hexText(a->second) << "\n";
+			}
 			ostringstream body;
 			body << "        org fff\n"
 				"        jmp _start\n"

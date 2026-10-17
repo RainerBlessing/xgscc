@@ -378,9 +378,3 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     // inc + jmp per round and the last step is an inc; the counter wraps at 256
     EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
 }
-
-TEST(CompileErrorTest, PointersAndArraysAreRefusedUntilTheGeneratorKnowsThem) {
-    EXPECT_NE(std::string::npos, errorOf("uint8_t *p; void main(void) { }").find("pointer"));
-    EXPECT_NE(std::string::npos, errorOf("uint8_t a[4]; void main(void) { }").find("array"));
-    EXPECT_NE(std::string::npos, errorOf("uint8_t a; void main(void) { a = *(uint8_t *)5; }").find("pointer"));
-}

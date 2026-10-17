@@ -137,7 +137,9 @@ the one before):
 3. **3c Pointers and arrays** of RAM through FSR/INDF. A pointer is the 8 bit RAM
    address. Indexing, `&x`, `*p`, pointer arguments, strings as `const` data
    in ROM come with 3d.
-   Status: Not Started
+   Status: Complete. Pointer and array reads and writes run through FSR/INDF with
+   only the direct registers `acc_lo` and `acc_hi` in between, because a `bank`
+   instruction would change FSR.
 4. **3d Constant tables in ROM.** `const uint8_t t[] = { ... }` read with
    `mov m,#hi / iread` (needs the new assembler directive `align`; the table
    sits on a 256 word boundary, an index is 8 bit). Reading changes only the low
@@ -163,7 +165,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3c next)
+**Status**: In Progress (3d next)
 
 ## Stage 4: the XGS library and the video kernel
 

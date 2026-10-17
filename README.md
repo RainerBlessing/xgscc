@@ -60,14 +60,24 @@ void add(uint8_t value)
   Constants are computed exactly, and a shift by the size of the type or more gives 0
   (for `>>` of a signed value 0 or -1).
 - **Expressions**: `+ - & | ^ ~ ! << >>`, unary `-`, the comparisons, `&&`, `||`,
-  parentheses and calls. Shift counts must be constants.
-- **Statements**: assignment with `= += -= &= |= ^= <<= >>=`, `++` and `--` (as
-  statements only), calls, `if`/`else`, `while`, `do`/`while`, `for`, `break`,
-  `continue`, `return`, blocks and declarations (also `static` and `const`).
+  parentheses, calls, casts, and with pointers `*p`, `&x`, `a[i]`. Shift counts must
+  be constants.
+- **Statements**: assignment with `= += -= &= |= ^= <<= >>=` (also to `*p` and
+  `a[i]`), `++` and `--` (as statements only, also `(*p)++` and `a[i]--`), calls,
+  `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, blocks
+  and declarations (also `static` and `const`).
+- **Arrays and pointers**: `uint8_t a[16];`, `int16_t w[4] = { 1, 2, 3 };`,
+  `uint8_t b[] = { 1, 2 };`, and pointers to the four integer types. A pointer is
+  the RAM address, one byte. `a` in an expression is the address of its first
+  element, `p + n` and `p++` count elements (a step of 2 bytes for 16 bit
+  elements), pointers compare like numbers. An array or pointer can be passed to a
+  function and returned. Not supported: pointers to pointers, arrays of arrays,
+  arrays as parameters (use a pointer), the difference of two pointers, `*p++`
+  (write `*p` and `p++` separately).
 - **Preprocessor**: `#include` is ignored, `#define NAME tokens` and `#undef NAME`
   work. Nothing else (no `#if`, no macros with parameters) yet.
-- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, pointers, arrays,
-  `switch`, `goto`. The compiler
+- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, `const` tables in
+  ROM, string literals, `switch`, `goto`, `struct`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the
@@ -86,10 +96,19 @@ whole program is known:
   need no `bank`, then the first bank, and so on.
 - Globals, static variables and the parameters of a function have an address of
   their own. `const` variables take none.
-- The local variables and the temporaries of an expression (at most four at a time)
-  form the frame of a function. Functions that cannot be active at the same time
-  (neither calls the other, directly or through others) share their frames; so a
-  function that calls another one keeps its locals.
+- The local variables and the temporaries of an expression form the frame of a
+  function. Functions that cannot be active at the same time (neither calls the
+  other, directly or through others) share their frames; so a function that calls
+  another one keeps its locals.
+- Arrays have a run of addresses of their own at the end of the banks (up to 112
+  bytes in all, also local ones and static ones; a local array is written again
+  from its initializer every time the function runs, otherwise it is not touched).
+  A 16 bit variable whose address is taken is placed the same way, so that its two
+  bytes are next to each other.
+- Reading and writing through a pointer sets FSR and uses INDF. `bank` changes the
+  bits of FSR, so while FSR points to data the code touches only the direct
+  registers `acc_lo` and `acc_hi` (two of the six, taken only when a program needs
+  them); the compiler refuses to generate anything else there.
 - A call stores the arguments into the parameters of the callee and returns the
   result in W. Only functions that main can reach are compiled.
 - `out of RAM` says how many bytes of which kind are needed.

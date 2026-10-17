@@ -42,7 +42,7 @@ typedef std::unique_ptr<Stmt> StmtPtr;
 
 struct Expr
 {
-	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST, INDEX };
+	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST, INDEX, INDIRECT };
 	Expr(Kind kind, int line) : kind(kind), line(line), value(0), parenthesized(false) {}
 
 	Kind kind;
@@ -54,7 +54,9 @@ struct Expr
 	ExprPtr left;		// UNARY: the operand; INDEX: the array or pointer
 	ExprPtr right;		// INDEX: the index
 	std::vector<ExprPtr> arguments;	// CALL
-	Type type;		// CAST: the type it converts to; left is the operand
+	Type type;		// CAST: the type it converts to; left is the operand.
+				// INDIRECT (made by the code generator, never by the parser): the type of the
+				// value in RAM at the address held in the temporary named by `name`
 };
 
 struct Stmt
