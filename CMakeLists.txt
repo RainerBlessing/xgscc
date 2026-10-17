@@ -14,6 +14,7 @@ add_subdirectory(sxcpu)
 
 add_library(xgscc_lib STATIC
     src/compiler.cpp
+    src/lexer.cpp
     src/hexwriter.cpp
 )
 target_include_directories(xgscc_lib PUBLIC src)
