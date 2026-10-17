@@ -1,4 +1,5 @@
 #include "parser.h"
+#include <map>
 #include <set>
 #include "errors.h"
 
@@ -50,12 +51,16 @@ namespace
 			Program result;
 			while (peek().type != Token::END)
 				topLevel(&result);
+			result.structs = structs;
 			return result;
 		}
 
 	private:
 		const vector<Token>& tokens;
 		size_t position;
+		vector<StructDefinition> structs;		// the number of a struct is its place here plus one
+		map<string, int> structNumbers;
+		map<string, Type> typedefs;
 
 		const Token& peek(size_t offset = 0) const
 		{
@@ -114,10 +119,10 @@ namespace
 				 contains(OTHER_TYPES, peek().text));
 		}
 
-		static bool isTypeName(const string& text)
+		bool isTypeName(const string& text) const
 		{
 			return text == "uint8_t" || text == "int8_t" || text == "uint16_t" || text == "int16_t" ||
-				text == "unsigned" || text == "signed";
+				text == "unsigned" || text == "signed" || text == "struct" || typedefs.count(text) != 0;
 		}
 
 		struct Specifiers
@@ -153,7 +158,11 @@ namespace
 				return result;
 			}
 			Token token = take();
-			if (token.text == "uint8_t")
+			if (token.text == "struct")
+				result.type = structType(expectName(), token.line);
+			else if (typedefs.count(token.text))
+				result.type = typedefs[token.text];
+			else if (token.text == "uint8_t")
 				result.type = Type(1, false);
 			else if (token.text == "int8_t")
 				result.type = Type(1, true);
@@ -171,6 +180,127 @@ namespace
 			return result;
 		}
 
+		// the type "struct name"; an unknown name is a struct that is declared later
+		Type structType(const string& name, int line)
+		{
+			map<string, int>::const_iterator found = structNumbers.find(name);
+			if (found == structNumbers.end())
+				throw CompileError(line, "unknown struct " + name);
+			Type type(1, false);
+			type.structId = found->second;
+			return type;
+		}
+
+		int structNumber(const string& name, int line)
+		{
+			map<string, int>::const_iterator found = structNumbers.find(name);
+			if (found != structNumbers.end())
+				return found->second;
+			StructDefinition definition;
+			definition.name = name;
+			definition.line = line;
+			structs.push_back(definition);
+			structNumbers[name] = (int) structs.size();
+			return (int) structs.size();
+		}
+
+		// struct name { members }  with the "struct" and the name already read
+		void structBody(int number)
+		{
+			StructDefinition& definition = structs[number - 1];
+			if (!definition.members.empty())
+				throw CompileError(peek().line, "struct " + definition.name + " is defined twice");
+			expectOperator("{");
+			vector<Member> members;
+			int offset = 0;
+			while (!isOperator("}"))
+			{
+				if (peek().type == Token::END)
+					throw CompileError(peek().line, "the end of the file is reached, '}' is missing");
+				int line = peek().line;
+				Specifiers specifier = specifiers();
+				if (specifier.isVoid)
+					throw CompileError(line, "a member cannot be void");
+				Member member;
+				member.type = withStars(specifier.type);
+				if (member.type.structId == number)
+					throw CompileError(line, "a struct cannot hold itself, use a pointer to it");
+				if (member.type.structId != 0)
+					throw CompileError(line, "a struct inside a struct is not supported yet, use a pointer");
+				member.name = expectName();
+				member.count = 0;
+				if (isOperator("["))
+				{
+					take();
+					if (peek().type != Token::NUMBER || peek().value <= 0)
+						throw CompileError(peek().line, "the size of an array member must be a positive number");
+					member.count = take().value;
+					expectOperator("]");
+				}
+				if (isOperator(":"))
+					throw CompileError(peek().line, "bit fields are not supported");
+				expectOperator(";");
+				for (size_t i = 0; i < members.size(); i++)
+				{
+					if (members[i].name == member.name)
+						throw CompileError(line, "the member '" + member.name + "' is declared twice");
+				}
+				member.offset = offset;
+				offset += member.type.size * (member.count == 0 ? 1 : member.count);
+				members.push_back(member);
+			}
+			take();
+			if (members.empty())
+				throw CompileError(definition.line, "struct " + definition.name + " has no members");
+			// the definition may have moved: structs grew while the members were read
+			structs[number - 1].members = members;
+			structs[number - 1].size = offset;
+		}
+
+		// typedef type name ;   and   typedef struct [tag] { ... } name ;
+		void typedefDeclaration()
+		{
+			int line = take().line;
+			Type type;
+			if (isWord("struct") && (isOperator("{", 1) || (peek(1).type == Token::IDENT && isOperator("{", 2))))
+			{
+				take();
+				string tag;
+				if (peek().type == Token::IDENT)
+					tag = take().text;
+				size_t aliasAt = position;
+				// the alias is the name behind the closing brace
+				int depth = 0;
+				while (!(isOperator("}") && depth == 1))
+				{
+					if (isOperator("{"))
+						depth++;
+					else if (isOperator("}"))
+						depth--;
+					if (peek().type == Token::END)
+						throw CompileError(line, "the struct is not closed");
+					take();
+				}
+				take();
+				string alias = expectName();
+				size_t after = position;
+				position = aliasAt;
+				int number = structNumber(tag.empty() ? alias : tag, line);
+				structBody(number);
+				position = after;
+				type.structId = number;
+				typedefs[alias] = withStars(type);
+				expectOperator(";");
+				return;
+			}
+			Specifiers specifier = specifiers();
+			if (specifier.isVoid)
+				throw CompileError(line, "a typedef cannot name void");
+			Type alias = withStars(specifier.type);
+			typedefs[expectName()] = alias;
+			expectOperator(";");
+		}
+
 		// ["*"] after the type: a pointer to it
 		Type withStars(const Type& base)
 		{
@@ -186,6 +316,21 @@ namespace
 
 		void topLevel(Program* result)
 		{
+			if (isWord("typedef"))
+			{
+				typedefDeclaration();
+				return;
+			}
+			if (isWord("struct") && peek(1).type == Token::IDENT && (isOperator("{", 2) || isOperator(";", 2)))
+			{
+				take();
+				int line = peek().line;
+				int number = structNumber(take().text, line);
+				if (isOperator("{"))
+					structBody(number);
+				expectOperator(";");
+				return;
+			}
 			if (!isTypeStart())
 				throw CompileError(peek().line, "unexpected " + describe(peek()) + ", expected a declaration or a function");
 			int line = peek().line;
@@ -213,6 +358,8 @@ namespace
 			result.returnType = withStars(type.type);
 			if (type.isVoid && result.returnType.isPointer)
 				throw CompileError(result.line, "a pointer to void is not supported");
+			if (result.returnType.structId != 0)
+				throw CompileError(result.line, "a function cannot return a struct, return a pointer to it");
 			result.name = expectName();
 			expectOperator("(");
 			if (isWord("void") && isOperator(")", 1))
@@ -227,6 +374,8 @@ namespace
 					if (parameterType.isVoid)
 						throw CompileError(parameter.line, "a parameter cannot be void");
 					parameter.type = withStars(parameterType.type);
+					if (parameter.type.structId != 0)
+						throw CompileError(parameter.line, "a struct is passed by a pointer to it");
 					parameter.name = expectName();
 					if (isOperator("["))
 						throw CompileError(peek().line, "array parameters are not supported, use a pointer");
@@ -276,6 +425,8 @@ namespace
 			if (isOperator("="))
 			{
 				take();
+				if (declaration->type.structId != 0)
+					throw CompileError(peek().line, "initializers of structs are not supported yet");
 				if (declaration->arraySize != 0)
 					initializerList(*declaration, sizeGiven);
 				else if (isOperator("{"))
@@ -510,7 +661,8 @@ namespace
 
 		static bool isAssignable(const Expr& expr)
 		{
-			return expr.kind == Expr::VARIABLE || expr.kind == Expr::INDEX || (expr.kind == Expr::UNARY && expr.name == "*");
+			return expr.kind == Expr::VARIABLE || expr.kind == Expr::INDEX || expr.kind == Expr::MEMBER ||
+				(expr.kind == Expr::UNARY && expr.name == "*");
 		}
 
 		// the variable or the *p and a[i] that a statement changes
@@ -654,13 +806,22 @@ namespace
 		ExprPtr postfix()
 		{
 			ExprPtr node = primary();
-			while (isOperator("["))
+			while (isOperator("[") || isOperator(".") || isOperator("->"))
 			{
-				ExprPtr index(new Expr(Expr::INDEX, take().line));
-				index->left = std::move(node);
-				index->right = expression();
-				expectOperator("]");
-				node = std::move(index);
+				if (isOperator("["))
+				{
+					ExprPtr index(new Expr(Expr::INDEX, take().line));
+					index->left = std::move(node);
+					index->right = expression();
+					expectOperator("]");
+					node = std::move(index);
+					continue;
+				}
+				ExprPtr member(new Expr(Expr::MEMBER, peek().line));
+				member->arrow = take().text == "->";
+				member->left = std::move(node);
+				member->name = expectName();
+				node = std::move(member);
 			}
 			return node;
 		}

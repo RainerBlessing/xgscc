@@ -1,5 +1,6 @@
 #include "ast.h"
 #include <sstream>
+#include <string>
 
 using namespace std;
 
@@ -7,8 +8,13 @@ Type pointerTo(const Type& element)
 {
 	Type pointer(1, false);
 	pointer.isPointer = true;
-	pointer.pointeeSize = element.size;
-	pointer.pointeeSigned = element.isSigned;
+	if (element.structId != 0)
+		pointer.pointeeStruct = element.structId;
+	else
+	{
+		pointer.pointeeSize = element.size;
+		pointer.pointeeSigned = element.isSigned;
+	}
 	return pointer;
 }
 
@@ -16,6 +22,8 @@ string typeName(const Type& type)
 {
 	if (type.isPointer)
 		return typeName(type.pointee()) + " *";
+	if (type.structId != 0)
+		return "struct " + to_string(type.structId);
 	return string(type.isSigned ? "" : "u") + "int" + (type.size == 1 ? "8" : "16") + "_t";
 }
 
@@ -33,6 +41,8 @@ string toString(const Expr& expr)
 		return expr.name;
 	case Expr::UNARY:
 		return "(" + expr.name + " " + toString(*expr.left) + ")";
+	case Expr::MEMBER:
+		return string("(") + (expr.arrow ? "->" : ".") + " " + toString(*expr.left) + " " + expr.name + ")";
 	case Expr::INDEX:
 		return "(index " + toString(*expr.left) + " " + toString(*expr.right) + ")";
 	case Expr::CAST:

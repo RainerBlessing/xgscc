@@ -328,6 +328,10 @@ namespace
 				info.returnsValue = function.returnsValue;
 				info.returnType = function.returnType;
 				info.parameters = function.parameters;
+				if (function.returnsValue)
+					refuseStructs(function.returnType, function.line);
+				for (size_t i = 0; i < function.parameters.size(); i++)
+					refuseStructs(function.parameters[i].type, function.parameters[i].line);
 				info.entry = "f_" + function.name;
 				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
 				return info;
@@ -379,8 +383,15 @@ namespace
 			return label;
 		}
 
+		static void refuseStructs(const Type& type, int line)
+		{
+			if (type.structId != 0 || type.pointeeStruct != 0)
+				throw CompileError(line, "structs are not supported by the code generator yet");
+		}
+
 		Variable declare(const Stmt& declaration)
 		{
+			refuseStructs(declaration.type, declaration.line);
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
@@ -910,8 +921,13 @@ namespace
 
 		Type typeOf(const Expr& expr)
 		{
+			if (expr.kind == Expr::MEMBER)
+				throw CompileError(expr.line, "structs are not supported by the code generator yet");
 			if (expr.kind == Expr::CAST)
+			{
+				refuseStructs(expr.type, expr.line);
 				return expr.type;
+			}
 			long value;
 			if (fold(expr, &value))
 				return constantType(value, expr.line);

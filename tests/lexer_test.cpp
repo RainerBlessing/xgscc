@@ -196,3 +196,9 @@ TEST(LexerTest, DefineCanHoldAString) {
     EXPECT_EQ(Token::STRING, tokens[0].type);
     EXPECT_EQ("hi", tokens[0].text);
 }
+
+TEST(LexerTest, ArrowIsOneToken) {
+    EXPECT_EQ("p -> x - > y", texts("p->x - > y"));
+    EXPECT_EQ("a - - b", texts("a - - b"));
+    EXPECT_EQ("a -- > b", texts("a-->b"));
+}

@@ -10,23 +10,31 @@
  */
 struct Type
 {
-	Type() : size(1), isSigned(false), isPointer(false), pointeeSize(0), pointeeSigned(false) {}
-	Type(int size, bool isSigned) : size(size), isSigned(isSigned), isPointer(false), pointeeSize(0), pointeeSigned(false) {}
+	Type() : size(1), isSigned(false), isPointer(false), pointeeSize(0), pointeeSigned(false), structId(0), pointeeStruct(0) {}
+	Type(int size, bool isSigned) : size(size), isSigned(isSigned), isPointer(false), pointeeSize(0), pointeeSigned(false), structId(0), pointeeStruct(0) {}
 	bool operator==(const Type& other) const
 	{
 		return size == other.size && isSigned == other.isSigned && isPointer == other.isPointer &&
-			pointeeSize == other.pointeeSize && pointeeSigned == other.pointeeSigned;
+			pointeeSize == other.pointeeSize && pointeeSigned == other.pointeeSigned &&
+			structId == other.structId && pointeeStruct == other.pointeeStruct;
 	}
 	bool operator!=(const Type& other) const { return !(*this == other); }
 
 	/** What a pointer points to. */
-	Type pointee() const { return Type(pointeeSize, pointeeSigned); }
+	Type pointee() const
+	{
+		Type element(pointeeSize, pointeeSigned);
+		element.structId = pointeeStruct;
+		return element;
+	}
 
 	int size;		// in bytes: 1 or 2
 	bool isSigned;
 	bool isPointer;
-	int pointeeSize;	// pointers: the size of the element, 1 or 2
+	int pointeeSize;	// pointers: the size of the element, 1 or 2 (0 for a struct)
 	bool pointeeSigned;
+	int structId;		// a struct: its number in Program::structs, counted from 1; otherwise 0
+	int pointeeStruct;	// a pointer to a struct: the number of the struct
 };
 
 /** The type of a pointer to elements of the given type. */
@@ -42,15 +50,16 @@ typedef std::unique_ptr<Stmt> StmtPtr;
 
 struct Expr
 {
-	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST, INDEX, INDIRECT };
-	Expr(Kind kind, int line) : kind(kind), line(line), value(0), parenthesized(false) {}
+	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST, INDEX, INDIRECT, MEMBER };
+	Expr(Kind kind, int line) : kind(kind), line(line), value(0), parenthesized(false), arrow(false) {}
 
 	Kind kind;
 	int line;
 	int value;		// NUMBER
 	bool parenthesized;	// written in parentheses
+	bool arrow;		// MEMBER: left->name, otherwise left.name
 	std::string name;	// VARIABLE: the variable, UNARY and BINARY: the operator ("*" and "&" are
-				// dereference and address), CALL: the function
+				// dereference and address), CALL: the function, MEMBER: the member
 	ExprPtr left;		// UNARY: the operand; INDEX: the array or pointer
 	ExprPtr right;		// INDEX: the index
 	std::vector<ExprPtr> arguments;	// CALL
@@ -103,8 +112,26 @@ struct Function
 	StmtPtr body;		// a BLOCK, empty for a prototype
 };
 
+struct Member
+{
+	std::string name;
+	Type type;		// of the member, or of the elements of an array
+	int count;		// elements of an array member, 0 if it is none
+	int offset;		// bytes from the start of the struct
+};
+
+struct StructDefinition
+{
+	StructDefinition() : line(0), size(0) {}
+	std::string name;
+	int line;
+	std::vector<Member> members;
+	int size;		// bytes, the members follow each other
+};
+
 struct Program
 {
+	std::vector<StructDefinition> structs;	// a struct has the number of its place here plus one
 	std::vector<StmtPtr> globals;		// DECLARATIONs
 	std::vector<Function> functions;	// the definitions
 	std::vector<Function> prototypes;	// declarations without a body

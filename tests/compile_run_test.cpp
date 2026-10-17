@@ -374,3 +374,9 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     // inc + jmp per round and the last step is an inc; the counter wraps at 256
     EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
 }
+
+TEST(CompileErrorTest, StructsAreRefusedUntilTheGeneratorKnowsThem) {
+    EXPECT_NE(std::string::npos, errorOf("struct P { uint8_t x; }; struct P v; void main(void) { }").find("struct"));
+    EXPECT_NE(std::string::npos, errorOf("struct P { uint8_t x; }; void f(struct P *p) { } void main(void) { }").find("struct"));
+    EXPECT_NE(std::string::npos, errorOf("struct P { uint8_t x; }; uint8_t a; void main(void) { a = ((struct P *)4)->x; }").find("struct"));
+}

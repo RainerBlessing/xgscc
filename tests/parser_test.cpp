@@ -727,3 +727,157 @@ TEST(ParserTest, CaseOutsideOfASwitch) {
     EXPECT_NE(std::string::npos, error.message.find("switch")) << error.message;
     EXPECT_NE(std::string::npos, errorOf(inMain("default: b = 1;")).message.find("switch"));
 }
+
+// structs
+
+TEST(ParserTest, StructDefinitionHasMembersOffsetsAndSize) {
+    Program program = parseSource("struct Sprite { uint8_t x; int8_t dx; uint16_t score; uint8_t name[4]; uint8_t *link; };"
+                                  "void main(void) { }");
+    ASSERT_EQ(1u, program.structs.size());
+    const StructDefinition& sprite = program.structs[0];
+    EXPECT_EQ("Sprite", sprite.name);
+    ASSERT_EQ(5u, sprite.members.size());
+    EXPECT_EQ("x", sprite.members[0].name);
+    EXPECT_EQ(0, sprite.members[0].offset);
+    EXPECT_EQ(1, sprite.members[1].offset);
+    EXPECT_TRUE(sprite.members[1].type.isSigned);
+    EXPECT_EQ(2, sprite.members[2].offset);
+    EXPECT_EQ(2, sprite.members[2].type.size);
+    EXPECT_EQ(4, sprite.members[3].offset);
+    EXPECT_EQ(4, sprite.members[3].count);
+    EXPECT_EQ(8, sprite.members[4].offset);
+    EXPECT_TRUE(sprite.members[4].type.isPointer);
+    EXPECT_EQ(9, sprite.size);
+}
+
+TEST(ParserTest, VariablesOfAStructType) {
+    Program program = parseSource("struct P { uint8_t x; uint8_t y; };"
+                                  "struct P a; struct P b[4]; struct P *c; void main(void) { }");
+    ASSERT_EQ(3u, program.globals.size());
+    EXPECT_EQ(1, program.globals[0]->type.structId);
+    EXPECT_EQ(0, program.globals[0]->arraySize);
+    EXPECT_EQ(1, program.globals[1]->type.structId);
+    EXPECT_EQ(4, program.globals[1]->arraySize);
+    EXPECT_TRUE(program.globals[2]->type.isPointer);
+    EXPECT_EQ(1, program.globals[2]->type.pointeeStruct);
+}
+
+TEST(ParserTest, StructPointerInsideItself) {
+    Program program = parseSource("struct Node { uint8_t value; struct Node *next; }; void main(void) { }");
+    ASSERT_EQ(1u, program.structs.size());
+    EXPECT_TRUE(program.structs[0].members[1].type.isPointer);
+    EXPECT_EQ(1, program.structs[0].members[1].type.pointeeStruct);
+    EXPECT_EQ(2, program.structs[0].size);
+}
+
+TEST(ParserTest, TwoStructs) {
+    Program program = parseSource("struct A { uint8_t a; }; struct B { uint16_t b; struct A *a; }; struct B v; void main(void) { }");
+    ASSERT_EQ(2u, program.structs.size());
+    EXPECT_EQ(2, program.globals[0]->type.structId);
+    EXPECT_EQ(1, program.structs[1].members[1].type.pointeeStruct);
+}
+
+TEST(ParserTest, TypedefOfAStruct) {
+    Program program = parseSource("typedef struct { uint8_t x; uint8_t y; } Point; typedef struct Q { uint8_t z; } Quad;"
+                                  "Point p; Quad q; Point *pp; void main(void) { }");
+    ASSERT_EQ(2u, program.structs.size());
+    EXPECT_EQ("Point", program.structs[0].name);
+    EXPECT_EQ(1, program.globals[0]->type.structId);
+    EXPECT_EQ(2, program.globals[1]->type.structId);
+    EXPECT_EQ(1, program.globals[2]->type.pointeeStruct);
+}
+
+TEST(ParserTest, TypedefOfAnIntegerType) {
+    Program program = parseSource("typedef uint8_t byte; typedef uint16_t word; byte a; word b; byte c[3]; byte *d; void main(void) { byte local = 1; }");
+    EXPECT_EQ(1, program.globals[0]->type.size);
+    EXPECT_EQ(2, program.globals[1]->type.size);
+    EXPECT_EQ(3, program.globals[2]->arraySize);
+    EXPECT_TRUE(program.globals[3]->type.isPointer);
+    EXPECT_EQ(Stmt::DECLARATION, program.functions[0].body->statements[0]->kind);
+}
+
+TEST(ParserTest, TypedefNameInAFunctionAndAsParameter) {
+    Program program = parseSource("typedef struct { uint8_t x; } P; uint8_t get(P *p) { return p->x; } void main(void) { P v; }");
+    EXPECT_TRUE(program.functions[0].parameters[0].type.isPointer);
+    EXPECT_EQ(1, program.functions[0].parameters[0].type.pointeeStruct);
+}
+
+TEST(ParserTest, LocalStruct) {
+    Program program = parseSource("struct P { uint8_t x; }; void main(void) { struct P v; struct P *p = &v; }");
+    EXPECT_EQ(1, program.functions[0].body->statements[0]->type.structId);
+    EXPECT_TRUE(program.functions[0].body->statements[1]->type.isPointer);
+}
+
+TEST(ParserTest, MemberAccess) {
+    EXPECT_EQ("(. a x)", expressionOf("a.x"));
+    EXPECT_EQ("(-> a x)", expressionOf("a->x"));
+    EXPECT_EQ("(. (index a 2) x)", expressionOf("a[2].x"));
+    EXPECT_EQ("(. (* a) x)", expressionOf("(*a).x"));
+    EXPECT_EQ("(+ (. a x) (-> b y))", expressionOf("a.x + b->y"));
+    EXPECT_EQ("(& (. a x))", expressionOf("&a.x"));
+    EXPECT_EQ("(index (. a name) 1)", expressionOf("a.name[1]"));
+    EXPECT_EQ("(-> (-> a next) value)", expressionOf("a->next->value"));
+}
+
+TEST(ParserTest, MemberAssignmentAndStep) {
+    Program program = parseSource(inMain("a.x = 1; a->y += 2; a[3].z++; --a->w;"));
+    const std::vector<StmtPtr>& s = program.functions[0].body->statements;
+    ASSERT_EQ(4u, s.size());
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[0]->kind);
+    EXPECT_EQ("(. a x)", toString(*s[0]->target));
+    EXPECT_EQ("+=", s[1]->op);
+    EXPECT_EQ("(-> a y)", toString(*s[1]->target));
+    EXPECT_EQ(Stmt::STEP, s[2]->kind);
+    EXPECT_EQ(Stmt::STEP, s[3]->kind);
+}
+
+TEST(ParserTest, CastToAStructPointer) {
+    Program program = parseSource("struct P { uint8_t x; }; uint8_t v; void main(void) { v = ((struct P *)5)->x; }");
+    EXPECT_EQ("(-> (cast struct 1 * 5) x)", toString(*program.functions[0].body->statements[0]->expr));
+}
+
+TEST(ParserTest, UnknownStruct) {
+    CompileError error = errorOf("struct Nope v; void main(void) { }");
+    EXPECT_EQ(1, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("Nope")) << error.message;
+}
+
+TEST(ParserTest, StructDefinedTwice) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a; }; struct A { uint8_t b; }; void main(void) { }").message.find("twice"));
+}
+
+TEST(ParserTest, MemberDeclaredTwice) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a; uint8_t a; }; void main(void) { }").message.find("twice"));
+}
+
+TEST(ParserTest, EmptyStruct) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { }; void main(void) { }").message.find("no members"));
+}
+
+TEST(ParserTest, StructInsideItselfByValue) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { struct A inner; }; void main(void) { }").message.find("pointer"));
+}
+
+TEST(ParserTest, StructInAStructByValueIsNotSupportedYet) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a; }; struct B { struct A a; }; void main(void) { }").message.find("inside"));
+}
+
+TEST(ParserTest, BitFieldsAreNotSupported) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a : 3; }; void main(void) { }").message.find("bit field"));
+}
+
+TEST(ParserTest, StructPassedOrReturnedByValueIsNotSupported) {
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a; }; void f(struct A v) { } void main(void) { }").message.find("pointer"));
+    EXPECT_NE(std::string::npos, errorOf("struct A { uint8_t a; }; struct A f(void) { } void main(void) { }").message.find("pointer"));
+}
+
+TEST(ParserTest, MemberNeedsAName) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = b.;")).message.find("name"));
+}
+
+TEST(ParserTest, ForwardDeclaration) {
+    Program program = parseSource("struct A; struct B { struct A *a; }; struct A { uint8_t v; struct B *b; }; struct B x; void main(void) { }");
+    ASSERT_EQ(2u, program.structs.size());
+    EXPECT_EQ(1, program.structs[1].members[0].type.pointeeStruct);
+    EXPECT_EQ(2, program.structs[0].size == 2 ? 2 : 0);
+}
