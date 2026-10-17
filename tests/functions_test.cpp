@@ -495,6 +495,6 @@ TEST(FunctionsTest, TheFunctionsExample) {
     text << file.rdbuf();
     ProgramRun run = runProgram(text.str());
     ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
-    EXPECT_FALSE(run.halted);       // main ends in an endless loop
+    EXPECT_TRUE(run.halted);        // main ends in "while (1) { }", a jump to itself
     EXPECT_EQ(100, run.value("total"));     // 1 + 3 + ... + 19
 }
