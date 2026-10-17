@@ -3,6 +3,11 @@
 
 using namespace std;
 
+string typeName(const Type& type)
+{
+	return string(type.isSigned ? "" : "u") + "int" + (type.size == 1 ? "8" : "16") + "_t";
+}
+
 string toString(const Expr& expr)
 {
 	switch (expr.kind)
@@ -17,6 +22,8 @@ string toString(const Expr& expr)
 		return expr.name;
 	case Expr::UNARY:
 		return "(" + expr.name + " " + toString(*expr.left) + ")";
+	case Expr::CAST:
+		return "(cast " + typeName(expr.type) + " " + toString(*expr.left) + ")";
 	case Expr::CALL:
 	{
 		string text = "(call " + expr.name;

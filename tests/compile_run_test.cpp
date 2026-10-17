@@ -378,3 +378,9 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     // inc + jmp per round and the last step is an inc; the counter wraps at 256
     EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
 }
+
+TEST(CompileErrorTest, TypesTheGeneratorDoesNotKnowYetAreRefused) {
+    EXPECT_NE(std::string::npos, errorOf("uint16_t x; void main(void) { }").find("uint16_t"));
+    EXPECT_NE(std::string::npos, errorOf("void main(void) { int8_t y; }").find("int8_t"));
+    EXPECT_NE(std::string::npos, errorOf("uint8_t x; void main(void) { x = (uint8_t)x; }").find("cast"));
+}

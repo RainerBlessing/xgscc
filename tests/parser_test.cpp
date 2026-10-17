@@ -391,3 +391,64 @@ TEST(ParserTest, StaticFunctionIsAccepted) {
     Program program = parseSource("static void f(void) { } void main(void) { }");
     EXPECT_EQ(2u, program.functions.size());
 }
+
+// types
+
+TEST(ParserTest, DeclaresVariablesOfAllTypes) {
+    Program program = parseSource("uint8_t a; int8_t b; uint16_t c; int16_t d; unsigned char e; signed char f;"
+                                  "void main(void) { }");
+    ASSERT_EQ(6u, program.globals.size());
+    const struct { int size; bool isSigned; } expected[] = { {1, false}, {1, true}, {2, false}, {2, true}, {1, false}, {1, true} };
+    for (size_t i = 0; i < 6; i++) {
+        EXPECT_EQ(expected[i].size, program.globals[i]->type.size) << program.globals[i]->name;
+        EXPECT_EQ(expected[i].isSigned, program.globals[i]->type.isSigned) << program.globals[i]->name;
+    }
+}
+
+TEST(ParserTest, TypeNames) {
+    EXPECT_EQ("uint8_t", typeName(Type(1, false)));
+    EXPECT_EQ("int8_t", typeName(Type(1, true)));
+    EXPECT_EQ("uint16_t", typeName(Type(2, false)));
+    EXPECT_EQ("int16_t", typeName(Type(2, true)));
+}
+
+TEST(ParserTest, LocalsAndFunctionsHaveTypes) {
+    Program program = parseSource("int16_t f(uint16_t a, int8_t b) { int16_t x = 1; return x; } void main(void) { }");
+    const Function& f = program.functions[0];
+    EXPECT_TRUE(f.returnsValue);
+    EXPECT_EQ(2, f.returnType.size);
+    EXPECT_TRUE(f.returnType.isSigned);
+    EXPECT_EQ(2, f.parameters[0].type.size);
+    EXPECT_FALSE(f.parameters[0].type.isSigned);
+    EXPECT_EQ(1, f.parameters[1].type.size);
+    EXPECT_TRUE(f.parameters[1].type.isSigned);
+    EXPECT_EQ(2, f.body->statements[0]->type.size);
+}
+
+TEST(ParserTest, Cast) {
+    EXPECT_EQ("(cast uint8_t a)", expressionOf("(uint8_t)a"));
+    EXPECT_EQ("(+ (cast int16_t a) 1)", expressionOf("(int16_t)a + 1"));
+    EXPECT_EQ("(cast uint16_t (+ a b))", expressionOf("(uint16_t)(a + b)"));
+    EXPECT_EQ("(cast uint8_t (cast int8_t a))", expressionOf("(uint8_t)(int8_t)a"));
+    EXPECT_EQ("(cast uint8_t (- a))", expressionOf("(uint8_t)-a"));
+}
+
+TEST(ParserTest, ParenthesesAroundANameAreNoCast) {
+    EXPECT_EQ("(+ a b)", expressionOf("(a) + b"));
+}
+
+TEST(ParserTest, CastToAnotherTypeIsNotSupportedYet) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = (int)b;")).message.find("int"));
+}
+
+TEST(ParserTest, CastToVoidIsAnError) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = (void)b;")).message.find("void"));
+}
+
+TEST(ParserTest, CastNeedsItsClosingParenthesis) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = (uint8_t b;")).message.find("')'"));
+}
+
+TEST(ParserTest, SignedAloneIsNotAType) {
+    EXPECT_NE(std::string::npos, errorOf("signed x; void main(void) { }").message.find("signed"));
+}

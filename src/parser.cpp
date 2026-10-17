@@ -10,8 +10,8 @@ namespace
 	const char* const LATER_ASSIGNMENTS[] = { "*=", "/=", "%=" };
 	const char* const LATER_STATEMENTS[] = { "switch", "goto", "case", "default" };
 	const char* const OTHER_TYPES[] = {
-		"int", "char", "short", "long", "signed", "float", "double", "volatile",
-		"uint16_t", "int8_t", "int16_t", "uint32_t", "int32_t", "struct", "enum"
+		"int", "char", "short", "long", "float", "double", "volatile",
+		"uint32_t", "int32_t", "struct", "enum"
 	};
 
 	template <size_t N>
@@ -110,8 +110,14 @@ namespace
 		bool isTypeStart() const
 		{
 			return peek().type == Token::IDENT &&
-				(peek().text == "uint8_t" || peek().text == "unsigned" || peek().text == "void" ||
-				 peek().text == "static" || peek().text == "const" || contains(OTHER_TYPES, peek().text));
+				(isTypeName(peek().text) || peek().text == "void" || peek().text == "static" || peek().text == "const" ||
+				 contains(OTHER_TYPES, peek().text));
+		}
+
+		static bool isTypeName(const string& text)
+		{
+			return text == "uint8_t" || text == "int8_t" || text == "uint16_t" || text == "int16_t" ||
+				text == "unsigned" || text == "signed";
 		}
 
 		struct Specifiers
@@ -120,6 +126,7 @@ namespace
 			bool isStatic;
 			bool isConst;
 			bool isVoid;
+			Type type;
 		};
 
 		// [static] [const] type, in any order of the qualifiers
@@ -147,13 +154,21 @@ namespace
 			}
 			Token token = take();
 			if (token.text == "uint8_t")
-				return result;
-			if (token.text == "unsigned" && isWord("char"))
+				result.type = Type(1, false);
+			else if (token.text == "int8_t")
+				result.type = Type(1, true);
+			else if (token.text == "uint16_t")
+				result.type = Type(2, false);
+			else if (token.text == "int16_t")
+				result.type = Type(2, true);
+			else if ((token.text == "unsigned" || token.text == "signed") && isWord("char"))
 			{
 				take();
-				return result;
+				result.type = Type(1, token.text == "signed");
 			}
-			throw CompileError(token.line, "type '" + token.text + "' is not supported yet, use uint8_t");
+			else
+				throw CompileError(token.line, "type '" + token.text + "' is not supported yet, use uint8_t, int8_t, uint16_t or int16_t");
+			return result;
 		}
 
 		// declarations and functions
@@ -181,6 +196,7 @@ namespace
 			Function result;
 			result.line = peek().line;
 			result.returnsValue = !type.isVoid;
+			result.returnType = type.type;
 			result.name = expectName();
 			expectOperator("(");
 			if (isWord("void") && isOperator(")", 1))
@@ -194,6 +210,7 @@ namespace
 					Specifiers parameterType = specifiers();
 					if (parameterType.isVoid)
 						throw CompileError(parameter.line, "a parameter cannot be void");
+					parameter.type = parameterType.type;
 					parameter.name = expectName();
 					result.parameters.push_back(parameter);
 					if (!isOperator(","))
@@ -217,6 +234,7 @@ namespace
 			if (type.isVoid)
 				throw CompileError(line, "a variable cannot be void");
 			StmtPtr declaration(new Stmt(Stmt::DECLARATION, line));
+			declaration->type = type.type;
 			declaration->isStatic = type.isStatic;
 			declaration->isConst = type.isConst;
 			declaration->name = expectName();
@@ -447,6 +465,9 @@ namespace
 			}
 			if (token.type == Token::OPERATOR && (token.text == "*" || token.text == "&"))
 				throw CompileError(token.line, "pointers are not supported yet");
+			if (isOperator("(") && peek(1).type == Token::IDENT && (isTypeName(peek(1).text) ||
+					peek(1).text == "void" || contains(OTHER_TYPES, peek(1).text)))
+				return cast();
 			return primary();
 		}
 
@@ -467,6 +488,19 @@ namespace
 				}
 			}
 			expectOperator(")");
+			return node;
+		}
+
+		// ( type ) operand
+		ExprPtr cast()
+		{
+			ExprPtr node(new Expr(Expr::CAST, take().line));
+			Specifiers type = specifiers();
+			if (type.isVoid)
+				throw CompileError(node->line, "a cast to void is not supported");
+			node->type = type.type;
+			expectOperator(")");
+			node->left = unary();
 			return node;
 		}
 

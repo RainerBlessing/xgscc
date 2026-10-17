@@ -193,6 +193,10 @@ namespace
 				info.line = function.line;
 				info.returnsValue = function.returnsValue;
 				info.parameters = function.parameters;
+				if (function.returnsValue)
+					requireUint8(function.returnType, function.line);
+				for (size_t i = 0; i < function.parameters.size(); i++)
+					requireUint8(function.parameters[i].type, function.parameters[i].line);
 				info.entry = "f_" + function.name;
 				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
 				return info;
@@ -230,8 +234,15 @@ namespace
 			return "v_" + (current != NULL ? current->name + "_" : string()) + name;
 		}
 
+		static void requireUint8(const Type& type, int line)
+		{
+			if (type != Type(1, false))
+				throw CompileError(line, "the type " + typeName(type) + " is not supported by the code generator yet");
+		}
+
 		Variable declare(const Stmt& declaration, bool isParameter = false)
 		{
+			requireUint8(declaration.type, declaration.line);
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
@@ -408,6 +419,8 @@ namespace
 			}
 			case Expr::CALL:
 				return false;
+			case Expr::CAST:
+				throw CompileError(expr.line, "casts are not supported by the code generator yet");
 			case Expr::UNARY:
 			{
 				int operand;
