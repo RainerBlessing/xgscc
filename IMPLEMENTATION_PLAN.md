@@ -87,7 +87,7 @@ start code.
   every operator with a few values including wraparound at 255, a countdown
   loop, `if`/`else`, nested loops, comparisons at the edges (0, 1, 127, 128, 255).
 - `counter.c` from `doc/compiler.txt` as the first end-to-end test.
-**Status**: Not Started
+**Status**: In Progress (project skeleton and hex writer done)
 
 ## Stage 2: functions and static memory
 
