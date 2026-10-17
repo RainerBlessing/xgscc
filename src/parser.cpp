@@ -7,7 +7,7 @@ using namespace std;
 namespace
 {
 	const char* const ASSIGNMENTS[] = { "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=" };
-	const char* const LATER_STATEMENTS[] = { "switch", "goto", "case", "default" };
+	const char* const LATER_STATEMENTS[] = { "goto" };
 	const char* const OTHER_TYPES[] = {
 		"int", "char", "short", "long", "float", "double", "volatile",
 		"uint32_t", "int32_t", "struct", "enum"
@@ -361,6 +361,10 @@ namespace
 					return doStatement();
 				if (peek().text == "return")
 					return returnStatement();
+				if (peek().text == "switch")
+					return switchStatement();
+				if (peek().text == "case" || peek().text == "default")
+					throw CompileError(line, "'" + peek().text + "' is not inside a switch");
 				if (peek().text == "break" || peek().text == "continue")
 				{
 					StmtPtr jump(new Stmt(peek().text == "break" ? Stmt::BREAK : Stmt::CONTINUE, line));
@@ -412,6 +416,39 @@ namespace
 			result->expr = expression();
 			expectOperator(")");
 			expectOperator(";");
+			return result;
+		}
+
+		// switch (value) { case constant: ... default: ... }
+		StmtPtr switchStatement()
+		{
+			StmtPtr result(new Stmt(Stmt::SWITCH, take().line));
+			expectOperator("(");
+			result->expr = expression();
+			expectOperator(")");
+			result->body = StmtPtr(new Stmt(Stmt::BLOCK, peek().line));
+			expectOperator("{");
+			while (!isOperator("}"))
+			{
+				if (peek().type == Token::END)
+					throw CompileError(peek().line, "the end of the file is reached, '}' is missing");
+				if (isWord("case"))
+				{
+					StmtPtr label(new Stmt(Stmt::CASE, take().line));
+					label->expr = expression();
+					expectOperator(":");
+					result->body->statements.push_back(std::move(label));
+				}
+				else if (isWord("default"))
+				{
+					StmtPtr label(new Stmt(Stmt::DEFAULT, take().line));
+					expectOperator(":");
+					result->body->statements.push_back(std::move(label));
+				}
+				else
+					result->body->statements.push_back(statement());
+			}
+			take();
 			return result;
 		}
 

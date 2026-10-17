@@ -61,7 +61,7 @@ struct Expr
 
 struct Stmt
 {
-	enum Kind { EMPTY, BLOCK, DECLARATION, ASSIGNMENT, STEP, CALL, IF, WHILE, DO_WHILE, FOR, RETURN, BREAK, CONTINUE };
+	enum Kind { EMPTY, BLOCK, DECLARATION, ASSIGNMENT, STEP, CALL, IF, WHILE, DO_WHILE, FOR, RETURN, BREAK, CONTINUE, SWITCH, CASE, DEFAULT };
 	Stmt(Kind kind, int line) : kind(kind), line(line), arraySize(0), isStatic(false), isConst(false) {}
 
 	Kind kind;
@@ -75,11 +75,12 @@ struct Stmt
 	bool isStatic;		// DECLARATION
 	bool isConst;		// DECLARATION
 	ExprPtr expr;		// the value of DECLARATION (may be empty) and ASSIGNMENT and RETURN (may be empty), the call of CALL,
-				// the condition of IF, WHILE, DO_WHILE, FOR (may be empty)
+				// the condition of IF, WHILE, DO_WHILE, FOR (may be empty), the value of SWITCH, the
+				// constant of CASE
 	std::vector<StmtPtr> statements;	// BLOCK
 	StmtPtr init;		// FOR
 	StmtPtr step;		// FOR
-	StmtPtr body;		// WHILE, DO_WHILE, FOR; the "then" of IF
+	StmtPtr body;		// WHILE, DO_WHILE, FOR; the "then" of IF; SWITCH: a BLOCK with CASE and DEFAULT in it
 	StmtPtr elseBody;	// IF
 };
 

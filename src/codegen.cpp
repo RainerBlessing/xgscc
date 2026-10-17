@@ -2055,6 +2055,12 @@ namespace
 			case Stmt::RETURN:
 				returnStatement(stmt);
 				break;
+			case Stmt::SWITCH:
+				switchStatement(stmt);
+				break;
+			case Stmt::CASE:
+			case Stmt::DEFAULT:
+				throw CompileError(stmt.line, "'case' and 'default' belong into a switch");
 			case Stmt::BREAK:
 			case Stmt::CONTINUE:
 				jumpOutOfLoop(stmt);
@@ -2228,9 +2234,74 @@ namespace
 		void jumpOutOfLoop(const Stmt& stmt)
 		{
 			bool isBreak = stmt.kind == Stmt::BREAK;
-			if (loops.empty())
+			if (loops.empty() || (!isBreak && loops.back().continueLabel.empty()))
 				throw CompileError(stmt.line, string("'") + (isBreak ? "break" : "continue") + "' is not inside a loop");
 			emit("jmp " + (isBreak ? loops.back().breakLabel : loops.back().continueLabel));
+		}
+
+		// The value is kept in a hidden variable and compared with every case in
+		// turn; "break" jumps to the end, "continue" is the one of the loop around.
+		void switchStatement(const Stmt& stmt)
+		{
+			Type type = typeOf(*stmt.expr);
+			if (type.isPointer)
+				throw CompileError(stmt.line, "a switch needs an integer, not a pointer");
+			scopes.push_back(map<string, Variable>());
+			Stmt hidden(Stmt::DECLARATION, stmt.line);
+			hidden.type = type;
+			hidden.name = "_switch_value_" + decimal(nextLabel);
+			Variable value = declare(hidden);
+			current->localLabels.push_back(value.lo);
+			if (type.size == 2)
+				current->localLabels.push_back(value.hi);
+			storeExpression(value.lo, value.hi, type, *stmt.expr);
+
+			string end = newJumpLabel();
+			string defaultLabel;
+			vector<string> labels;
+			set<long> seen;
+			const vector<StmtPtr>& body = stmt.body->statements;
+			for (size_t i = 0; i < body.size(); i++)
+			{
+				labels.push_back("");
+				if (body[i]->kind == Stmt::DEFAULT)
+				{
+					if (!defaultLabel.empty())
+						throw CompileError(body[i]->line, "there is more than one default in the switch");
+					defaultLabel = labels[i] = newJumpLabel();
+				}
+				else if (body[i]->kind == Stmt::CASE)
+				{
+					long constant;
+					if (!fold(*body[i]->expr, &constant))
+						throw CompileError(body[i]->line, "a case needs a constant");
+					checkFits(constant, type, body[i]->line);
+					if (!seen.insert(wrapTo(constant, type)).second)
+						throw CompileError(body[i]->line, "the case " + decimal(constant) + " appears twice");
+					labels[i] = newJumpLabel();
+					Expr comparison(Expr::BINARY, body[i]->line);
+					comparison.name = "==";
+					comparison.left = ExprPtr(new Expr(Expr::VARIABLE, body[i]->line));
+					comparison.left->name = hidden.name;
+					comparison.right = ExprPtr(new Expr(Expr::NUMBER, body[i]->line));
+					comparison.right->value = (int) constant;
+					branch(true, comparison, labels[i]);
+				}
+			}
+			emit("jmp " + (defaultLabel.empty() ? end : defaultLabel));
+
+			LoopLabels loop = { end, loops.empty() ? string() : loops.back().continueLabel };
+			loops.push_back(loop);
+			for (size_t i = 0; i < body.size(); i++)
+			{
+				if (!labels[i].empty())
+					label(labels[i]);
+				else
+					statement(*body[i]);
+			}
+			loops.pop_back();
+			label(end);
+			scopes.pop_back();
 		}
 
 		void ifStatement(const Stmt& stmt)

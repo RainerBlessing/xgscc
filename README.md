@@ -70,8 +70,10 @@ void add(uint8_t value)
   gives 0 (the sign for `>>` of a signed value).
 - **Statements**: assignment with `= += -= *= /= %= &= |= ^= <<= >>=` (also to `*p` and
   `a[i]`), `++` and `--` (as statements only, also `(*p)++` and `a[i]--`), calls,
-  `if`/`else`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, blocks
-  and declarations (also `static` and `const`).
+  `if`/`else`, `while`, `do`/`while`, `for`, `switch` with `case` constants (also
+  stacked, falling through and with `default`; a comparison chain, one test per
+  case), `break`, `continue`, `return`, blocks and declarations (also `static` and
+  `const`).
 - **Arrays and pointers**: `uint8_t a[16];`, `int16_t w[4] = { 1, 2, 3 };`,
   `uint8_t b[] = { 1, 2 };`, and pointers to the four integer types. A pointer is
   the RAM address, one byte. `a` in an expression is the address of its first
@@ -89,7 +91,7 @@ void add(uint8_t value)
   and not changed. A table holds at most 256 bytes (128 elements of 16 bits), each
   byte takes one ROM word. A string also initializes a RAM array:
   `uint8_t line[] = "ready";`.
-- **Not yet**: `int`/`long`, `switch`, `goto`, `struct`. The compiler
+- **Not yet**: `int`/`long`, `goto`, `struct`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the

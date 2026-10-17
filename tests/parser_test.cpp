@@ -248,11 +248,9 @@ TEST(ParserTest, OtherTypesAreNotSupportedYet) {
 }
 
 TEST(ParserTest, StatementsOfLaterStagesAreNotSupportedYet) {
-    for (const char* keyword : { "switch", "goto", "case", "default" }) {
-        CompileError error = errorOf(inMain(std::string(keyword) + " ;"));
-        EXPECT_EQ(2, error.line);
-        EXPECT_NE(std::string::npos, error.message.find(keyword)) << error.message;
-    }
+    CompileError error = errorOf(inMain("goto ;"));
+    EXPECT_EQ(2, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("goto")) << error.message;
 }
 
 TEST(ParserTest, GarbageAtTheTopLevelIsAnError) {
@@ -670,4 +668,62 @@ TEST(ParserTest, StringOnlyForArraysOfBytes) {
 
 TEST(ParserTest, StringInAnExpressionIsAnError) {
     EXPECT_NE(std::string::npos, errorOf(inMain("a = \"x\";")).message.find("string"));
+}
+
+// switch
+
+TEST(ParserTest, SwitchWithCasesAndDefault) {
+    Program program = parseSource(inMain("switch (a) { case 1: b = 1; break; case 2: b = 2; default: b = 3; }"));
+    const Stmt& sw = firstStatement(program);
+    EXPECT_EQ(Stmt::SWITCH, sw.kind);
+    EXPECT_EQ("a", toString(*sw.expr));
+    ASSERT_TRUE(sw.body);
+    const std::vector<StmtPtr>& s = sw.body->statements;
+    ASSERT_EQ(7u, s.size());
+    EXPECT_EQ(Stmt::CASE, s[0]->kind);
+    EXPECT_EQ("1", toString(*s[0]->expr));
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[1]->kind);
+    EXPECT_EQ(Stmt::BREAK, s[2]->kind);
+    EXPECT_EQ(Stmt::CASE, s[3]->kind);
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[4]->kind);
+    EXPECT_EQ(Stmt::DEFAULT, s[5]->kind);
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[6]->kind);
+}
+
+TEST(ParserTest, StackedCasesAndConstantExpressions) {
+    Program program = parseSource(inMain("switch (a) { case 1: case 2 + 3: case 'x': break; }"));
+    const std::vector<StmtPtr>& s = firstStatement(program).body->statements;
+    ASSERT_EQ(4u, s.size());
+    EXPECT_EQ("(+ 2 3)", toString(*s[1]->expr));
+    EXPECT_EQ("120", toString(*s[2]->expr));
+}
+
+TEST(ParserTest, SwitchBodyMayDeclareAndNest) {
+    Program program = parseSource(inMain("switch (a) { case 1: { uint8_t t = 2; switch (t) { default: break; } } }"));
+    EXPECT_EQ(Stmt::SWITCH, firstStatement(program).kind);
+}
+
+TEST(ParserTest, EmptySwitch) {
+    Program program = parseSource(inMain("switch (a) { }"));
+    EXPECT_TRUE(firstStatement(program).body->statements.empty());
+}
+
+TEST(ParserTest, CaseNeedsItsColon) {
+    CompileError error = errorOf(inMain("switch (a) { case 1 b = 1; }"));
+    EXPECT_NE(std::string::npos, error.message.find("':'")) << error.message;
+}
+
+TEST(ParserTest, DefaultNeedsItsColon) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("switch (a) { default b = 1; }")).message.find("':'"));
+}
+
+TEST(ParserTest, SwitchNeedsABlock) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("switch (a) b = 1;")).message.find("'{'"));
+}
+
+TEST(ParserTest, CaseOutsideOfASwitch) {
+    CompileError error = errorOf(inMain("case 1: b = 1;"));
+    EXPECT_EQ(2, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("switch")) << error.message;
+    EXPECT_NE(std::string::npos, errorOf(inMain("default: b = 1;")).message.find("switch"));
 }
