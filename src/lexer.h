@@ -5,9 +5,9 @@
 
 struct Token
 {
-	enum Type { END, IDENT, NUMBER, OPERATOR };
+	enum Type { END, IDENT, NUMBER, OPERATOR, STRING };
 	Type type;
-	std::string text;	// as written; for a character literal the literal itself
+	std::string text;	// as written; for a character literal the literal itself; for a STRING its characters
 	int value;		// NUMBER
 	int line;
 };

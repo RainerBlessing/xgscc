@@ -378,6 +378,8 @@ namespace
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
 			Variable variable;
 			variable.type = declaration.type;
+			if (declaration.isConst && declaration.arraySize != 0)
+				throw CompileError(declaration.line, "const arrays (tables in ROM) are not supported by the code generator yet");
 			if (declaration.isConst)
 			{
 				long value;

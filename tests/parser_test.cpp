@@ -603,3 +603,56 @@ TEST(ParserTest, PointerDeclarationInAFor) {
     Program program = parseSource(inMain("for (uint8_t *p = a; p < b; p++) ;"));
     EXPECT_TRUE(firstStatement(program).init->type.isPointer);
 }
+
+// tables and strings
+
+TEST(ParserTest, ConstArrayIsATable) {
+    Program program = parseSource("const uint8_t t[] = { 1, 2, 3 }; const int16_t u[2] = { -1, 5 }; void main(void) { }");
+    ASSERT_EQ(2u, program.globals.size());
+    EXPECT_TRUE(program.globals[0]->isConst);
+    EXPECT_EQ(3, program.globals[0]->arraySize);
+    EXPECT_TRUE(program.globals[1]->isConst);
+    EXPECT_EQ(2, program.globals[1]->type.size);
+}
+
+TEST(ParserTest, ConstArrayInAFunction) {
+    Program program = parseSource("void main(void) { static const uint8_t t[2] = { 1, 2 }; const uint8_t u[1] = { 7 }; }");
+    EXPECT_TRUE(program.functions[0].body->statements[0]->isConst);
+    EXPECT_TRUE(program.functions[0].body->statements[1]->isConst);
+}
+
+TEST(ParserTest, StringInitializesAnArray) {
+    Program program = parseSource("uint8_t s[] = \"ab\"; void main(void) { }");
+    EXPECT_EQ(3, program.globals[0]->arraySize);        // with the 0 at the end
+    ASSERT_EQ(3u, program.globals[0]->elements.size());
+    EXPECT_EQ("97", toString(*program.globals[0]->elements[0]));
+    EXPECT_EQ("98", toString(*program.globals[0]->elements[1]));
+    EXPECT_EQ("0", toString(*program.globals[0]->elements[2]));
+}
+
+TEST(ParserTest, StringInAConstTable) {
+    Program program = parseSource("const uint8_t s[] = \"Hi\\n\"; void main(void) { }");
+    EXPECT_EQ(4, program.globals[0]->arraySize);
+    EXPECT_EQ("10", toString(*program.globals[0]->elements[2]));
+}
+
+TEST(ParserTest, StringThatFillsTheArrayHasNoTerminator) {
+    Program program = parseSource("uint8_t s[2] = \"ab\"; uint8_t t[4] = \"ab\"; void main(void) { }");
+    EXPECT_EQ(2u, program.globals[0]->elements.size());
+    EXPECT_EQ(3u, program.globals[1]->elements.size());     // the rest is filled with zeros later
+}
+
+TEST(ParserTest, StringTooLongForTheArray) {
+    CompileError error = errorOf("uint8_t s[1] = \"ab\";\nvoid main(void) { }");
+    EXPECT_EQ(1, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("initializers")) << error.message;
+}
+
+TEST(ParserTest, StringOnlyForArraysOfBytes) {
+    EXPECT_NE(std::string::npos, errorOf("uint16_t s[] = \"ab\"; void main(void) { }").message.find("8 bit"));
+    EXPECT_NE(std::string::npos, errorOf("uint8_t s = \"ab\"; void main(void) { }").message.find("string"));
+}
+
+TEST(ParserTest, StringInAnExpressionIsAnError) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = \"x\";")).message.find("string"));
+}

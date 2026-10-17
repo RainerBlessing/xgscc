@@ -48,6 +48,8 @@ namespace
 					tokens.push_back(number());
 				else if (c == '\'')
 					tokens.push_back(character());
+				else if (c == '"')
+					tokens.push_back(stringLiteral());
 				else if (isIdentStart(c))
 					identifier(&tokens);
 				else
@@ -220,6 +222,50 @@ namespace
 		{
 			if (value > 0xffff)
 				throw CompileError(line, "number is too large");
+		}
+
+		// the value of the character after a backslash
+		int escape(char c)
+		{
+			switch (c)
+			{
+			case 'n': return '\n';
+			case 't': return '\t';
+			case 'r': return '\r';
+			case '0': return 0;
+			case '\\': return '\\';
+			case '\'': return '\'';
+			case '"': return '"';
+			default: throw CompileError(line, string("unknown escape \\") + c);
+			}
+		}
+
+		Token stringLiteral()
+		{
+			int start = line;
+			position++;
+			std::string characters;
+			for (;;)
+			{
+				char c = peek();
+				if (c == '"')
+					break;
+				if (c == '\0' || c == '\n')
+					throw CompileError(start, "the string is not closed");
+				if (c == '\\')
+				{
+					characters += (char) escape(peek(1));
+					position += 2;
+				}
+				else
+				{
+					characters += c;
+					position++;
+				}
+			}
+			position++;
+			Token token = { Token::STRING, characters, 0, start };
+			return token;
 		}
 
 		Token character()

@@ -452,10 +452,6 @@ TEST(PointersErrorTest, OtherOperatorsOnPointers) {
     EXPECT_TRUE(contains(errorOf(source("uint8_t *p; uint8_t x;", "x = ~p;")), "pointer"));
 }
 
-TEST(PointersErrorTest, ConstArrayIsNotSupportedYet) {
-    EXPECT_TRUE(contains(errorOf(source("const uint8_t table[2] = { 1, 2 };", "")), "const"));
-}
-
 TEST(PointersErrorTest, ArrayInitializerMustBeConstant) {
     EXPECT_TRUE(contains(errorOf(source("uint8_t v; uint8_t a[2] = { 1, v };", "")), "constant"));
 }

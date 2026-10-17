@@ -159,3 +159,40 @@ TEST(LexerTest, BadCharacterLiteralIsAnError) {
     EXPECT_EQ(1, errorOf("'ab'").line);
     EXPECT_EQ(1, errorOf("''").line);
 }
+
+// strings
+
+TEST(LexerTest, StringLiteral) {
+    std::vector<Token> tokens = tokenize("\"hello\" x");
+    ASSERT_EQ(3u, tokens.size());
+    EXPECT_EQ(Token::STRING, tokens[0].type);
+    EXPECT_EQ("hello", tokens[0].text);
+    EXPECT_EQ(Token::IDENT, tokens[1].type);
+}
+
+TEST(LexerTest, EmptyString) {
+    EXPECT_EQ("", tokenize("\"\"")[0].text);
+}
+
+TEST(LexerTest, StringEscapes) {
+    EXPECT_EQ(std::string("a\nb\tc\\d\"e\0f", 11), tokenize("\"a\\nb\\tc\\\\d\\\"e\\0f\"")[0].text);
+}
+
+TEST(LexerTest, StringMayHoldCommentMarks) {
+    EXPECT_EQ("a // b /* c", tokenize("\"a // b /* c\"")[0].text);
+}
+
+TEST(LexerTest, UnterminatedStringIsAnError) {
+    EXPECT_EQ(1, errorOf("\"never closed").line);
+    EXPECT_EQ(1, errorOf("\"line\nbreak\"").line);
+}
+
+TEST(LexerTest, UnknownEscapeInAString) {
+    EXPECT_NE(std::string::npos, errorOf("\"a\\qb\"").message.find("\\q"));
+}
+
+TEST(LexerTest, DefineCanHoldAString) {
+    std::vector<Token> tokens = tokenize("#define GREETING \"hi\"\nGREETING");
+    EXPECT_EQ(Token::STRING, tokens[0].type);
+    EXPECT_EQ("hi", tokens[0].text);
+}

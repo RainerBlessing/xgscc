@@ -378,3 +378,7 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     // inc + jmp per round and the last step is an inc; the counter wraps at 256
     EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
 }
+
+TEST(CompileErrorTest, ConstTablesAreRefusedUntilTheGeneratorKnowsThem) {
+    EXPECT_NE(std::string::npos, errorOf("const uint8_t t[2] = { 1, 2 }; void main(void) { }").find("tables"));
+}

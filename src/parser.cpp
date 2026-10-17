@@ -271,8 +271,6 @@ namespace
 				else if (!isOperator("]"))
 					throw CompileError(peek().line, "the size of an array must be a number");
 				expectOperator("]");
-				if (declaration->isConst)
-					throw CompileError(line, "const arrays (tables in ROM) are not supported yet");
 				declaration->arraySize = sizeGiven ? declaration->arraySize : -1;
 			}
 			if (isOperator("="))
@@ -282,6 +280,8 @@ namespace
 					initializerList(*declaration, sizeGiven);
 				else if (isOperator("{"))
 					throw CompileError(peek().line, "an initializer list is only for arrays");
+				else if (peek().type == Token::STRING)
+					throw CompileError(peek().line, "a string can only initialize an array");
 				else
 					declaration->expr = expression();
 			}
@@ -295,6 +295,11 @@ namespace
 		// { value, value, ... } of an array; without a size the list gives it
 		void initializerList(Stmt& declaration, bool sizeGiven)
 		{
+			if (peek().type == Token::STRING)
+			{
+				stringInitializer(declaration, sizeGiven);
+				return;
+			}
 			if (!isOperator("{"))
 				throw CompileError(peek().line, "an array needs an initializer list in { }");
 			take();
@@ -440,6 +445,30 @@ namespace
 			expectOperator(")");
 			result->body = statement();
 			return result;
+		}
+
+		// "text" for an array of bytes: the characters and, if there is room, a 0
+		void stringInitializer(Stmt& declaration, bool sizeGiven)
+		{
+			Token text = take();
+			if (declaration.type.size != 1 || declaration.type.isPointer)
+				throw CompileError(text.line, "a string can only initialize an array of 8 bit integers");
+			for (size_t i = 0; i < text.text.size(); i++)
+			{
+				ExprPtr character(new Expr(Expr::NUMBER, text.line));
+				character->value = (unsigned char) text.text[i];
+				declaration.elements.push_back(std::move(character));
+			}
+			int characters = (int) declaration.elements.size();
+			if (!sizeGiven || characters < declaration.arraySize)
+			{
+				declaration.elements.push_back(ExprPtr(new Expr(Expr::NUMBER, text.line)));
+				characters++;
+			}
+			if (!sizeGiven)
+				declaration.arraySize = characters;
+			else if ((int) declaration.elements.size() > declaration.arraySize)
+				throw CompileError(declaration.line, "too many initializers for the array '" + declaration.name + "'");
 		}
 
 		static bool isAssignable(const Expr& expr)
@@ -641,6 +670,8 @@ namespace
 				inner->parenthesized = true;
 				return inner;
 			}
+			if (token.type == Token::STRING)
+				throw CompileError(token.line, "a string can only initialize an array");
 			throw unexpected("an expression");
 		}
 	};
