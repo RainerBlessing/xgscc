@@ -303,6 +303,10 @@ namespace
 				info.returnsValue = function.returnsValue;
 				info.returnType = function.returnType;
 				info.parameters = function.parameters;
+				if (function.returnsValue)
+					refusePointers(function.returnType, function.line);
+				for (size_t i = 0; i < function.parameters.size(); i++)
+					refusePointers(function.parameters[i].type, function.parameters[i].line);
 				info.entry = "f_" + function.name;
 				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
 				return info;
@@ -344,8 +348,17 @@ namespace
 			return "v_" + (current != NULL ? current->name + "_" : string()) + name;
 		}
 
+		static void refusePointers(const Type& type, int line)
+		{
+			if (type.isPointer)
+				throw CompileError(line, "pointers are not supported by the code generator yet");
+		}
+
 		Variable declare(const Stmt& declaration)
 		{
+			refusePointers(declaration.type, declaration.line);
+			if (declaration.arraySize != 0)
+				throw CompileError(declaration.line, "arrays are not supported by the code generator yet");
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
@@ -548,14 +561,19 @@ namespace
 				return false;
 			case Expr::CAST:
 			{
+				refusePointers(expr.type, expr.line);
 				long operand;
 				if (!fold(*expr.left, &operand))
 					return false;
 				*value = wrapTo(operand, expr.type);
 				return true;
 			}
+			case Expr::INDEX:
+				throw CompileError(expr.line, "arrays are not supported by the code generator yet");
 			case Expr::UNARY:
 			{
+				if (expr.name == "*" || expr.name == "&")
+					throw CompileError(expr.line, "pointers are not supported by the code generator yet");
 				long operand;
 				if (!fold(*expr.left, &operand))
 					return false;
@@ -1373,10 +1391,13 @@ namespace
 				localDeclaration(stmt);
 				break;
 			case Stmt::ASSIGNMENT:
-				assignment(stmt);
-				break;
 			case Stmt::STEP:
-				step(stmt);
+				if (stmt.target)
+					throw CompileError(stmt.line, "pointers and arrays are not supported by the code generator yet");
+				if (stmt.kind == Stmt::ASSIGNMENT)
+					assignment(stmt);
+				else
+					step(stmt);
 				break;
 			case Stmt::CALL:
 				call(*stmt.expr, false);

@@ -452,3 +452,154 @@ TEST(ParserTest, CastNeedsItsClosingParenthesis) {
 TEST(ParserTest, SignedAloneIsNotAType) {
     EXPECT_NE(std::string::npos, errorOf("signed x; void main(void) { }").message.find("signed"));
 }
+
+// pointers and arrays
+
+TEST(ParserTest, PointerDeclarations) {
+    Program program = parseSource("uint8_t *p; int16_t *q; uint8_t* r; void main(void) { }");
+    ASSERT_EQ(3u, program.globals.size());
+    EXPECT_TRUE(program.globals[0]->type.isPointer);
+    EXPECT_EQ(1, program.globals[0]->type.pointeeSize);
+    EXPECT_FALSE(program.globals[0]->type.pointeeSigned);
+    EXPECT_TRUE(program.globals[1]->type.isPointer);
+    EXPECT_EQ(2, program.globals[1]->type.pointeeSize);
+    EXPECT_TRUE(program.globals[1]->type.pointeeSigned);
+    EXPECT_TRUE(program.globals[2]->type.isPointer);
+    EXPECT_EQ(1, program.globals[2]->type.size);        // the address is one byte
+}
+
+TEST(ParserTest, PointerTypeNames) {
+    EXPECT_EQ("uint8_t *", typeName(pointerTo(Type(1, false))));
+    EXPECT_EQ("int16_t *", typeName(pointerTo(Type(2, true))));
+}
+
+TEST(ParserTest, ConstPointeeDoesNotMakeThePointerConst) {
+    Program program = parseSource("const uint8_t *p; void main(void) { }");
+    EXPECT_TRUE(program.globals[0]->type.isPointer);
+    EXPECT_FALSE(program.globals[0]->isConst);
+}
+
+TEST(ParserTest, PointerToPointerIsNotSupportedYet) {
+    EXPECT_NE(std::string::npos, errorOf("uint8_t **p; void main(void) { }").message.find("pointer"));
+}
+
+TEST(ParserTest, ArrayDeclarations) {
+    Program program = parseSource("uint8_t a[16]; int16_t b[4]; uint8_t c[3] = { 1, 2, 3 }; uint8_t d[] = { 5, 6 }; void main(void) { }");
+    ASSERT_EQ(4u, program.globals.size());
+    EXPECT_EQ(16, program.globals[0]->arraySize);
+    EXPECT_EQ(4, program.globals[1]->arraySize);
+    EXPECT_EQ(2, program.globals[1]->type.size);
+    EXPECT_EQ(3, program.globals[2]->arraySize);
+    ASSERT_EQ(3u, program.globals[2]->elements.size());
+    EXPECT_EQ("2", toString(*program.globals[2]->elements[1]));
+    EXPECT_EQ(2, program.globals[3]->arraySize);        // from the initializer
+}
+
+TEST(ParserTest, ArrayOfPointers) {
+    Program program = parseSource("uint8_t *table[4]; void main(void) { }");
+    EXPECT_EQ(4, program.globals[0]->arraySize);
+    EXPECT_TRUE(program.globals[0]->type.isPointer);
+}
+
+TEST(ParserTest, LocalArray) {
+    Program program = parseSource("void main(void) { uint8_t buffer[8]; }");
+    EXPECT_EQ(8, program.functions[0].body->statements[0]->arraySize);
+}
+
+TEST(ParserTest, ArrayNeedsASize) {
+    EXPECT_NE(std::string::npos, errorOf("uint8_t a[]; void main(void) { }").message.find("size"));
+    EXPECT_NE(std::string::npos, errorOf("uint8_t a[0]; void main(void) { }").message.find("size"));
+}
+
+TEST(ParserTest, ArraySizeIsANumber) {
+    EXPECT_NE(std::string::npos, errorOf("uint8_t n; uint8_t a[n]; void main(void) { }").message.find("number"));
+}
+
+TEST(ParserTest, TooManyInitializers) {
+    CompileError error = errorOf("uint8_t a[2] = { 1, 2, 3 };\nvoid main(void) { }");
+    EXPECT_EQ(1, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("initializer")) << error.message;
+}
+
+TEST(ParserTest, InitializerListOnlyForArrays) {
+    EXPECT_NE(std::string::npos, errorOf("uint8_t a = { 1 }; void main(void) { }").message.find("array"));
+}
+
+TEST(ParserTest, ArrayNeedsAnInitializerList) {
+    EXPECT_NE(std::string::npos, errorOf("uint8_t a[2] = 5; void main(void) { }").message.find("{"));
+}
+
+TEST(ParserTest, PointerParameterAndResult) {
+    Program program = parseSource("uint8_t *f(uint8_t *a, int16_t *b) { return a; } void main(void) { }");
+    const Function& f = program.functions[0];
+    EXPECT_TRUE(f.returnsValue);
+    EXPECT_TRUE(f.returnType.isPointer);
+    EXPECT_TRUE(f.parameters[0].type.isPointer);
+    EXPECT_EQ(2, f.parameters[1].type.pointeeSize);
+}
+
+TEST(ParserTest, DereferenceAddressAndIndex) {
+    EXPECT_EQ("(* a)", expressionOf("*a"));
+    EXPECT_EQ("(& a)", expressionOf("&a"));
+    EXPECT_EQ("(index a b)", expressionOf("a[b]"));
+    EXPECT_EQ("(index a (+ b 1))", expressionOf("a[b + 1]"));
+    EXPECT_EQ("(& (index a 2))", expressionOf("&a[2]"));
+    EXPECT_EQ("(+ (* a) 1)", expressionOf("*a + 1"));
+    EXPECT_EQ("(* (+ a 1))", expressionOf("*(a + 1)"));
+    EXPECT_EQ("(* (index a 1))", expressionOf("*a[1]"));
+    EXPECT_EQ("(index (index a 1) 2)", expressionOf("a[1][2]"));
+    EXPECT_EQ("(* (* a))", expressionOf("**a"));
+}
+
+TEST(ParserTest, IndexNeedsItsClosingBracket) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a = b[1;")).message.find("']'"));
+}
+
+TEST(ParserTest, CastToAPointer) {
+    EXPECT_EQ("(cast uint8_t * a)", expressionOf("(uint8_t *)a"));
+    EXPECT_EQ("(cast int16_t * (+ a 1))", expressionOf("(int16_t*)(a + 1)"));
+}
+
+TEST(ParserTest, AssignmentToAPointerTarget) {
+    Program program = parseSource(inMain("*a = 3; a[b] += 2; a[0]++; (*a)--;"));
+    const std::vector<StmtPtr>& s = program.functions[0].body->statements;
+    ASSERT_EQ(4u, s.size());
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[0]->kind);
+    ASSERT_TRUE(s[0]->target);
+    EXPECT_EQ("(* a)", toString(*s[0]->target));
+    EXPECT_EQ("=", s[0]->op);
+    EXPECT_EQ(Stmt::ASSIGNMENT, s[1]->kind);
+    EXPECT_EQ("(index a b)", toString(*s[1]->target));
+    EXPECT_EQ("+=", s[1]->op);
+    EXPECT_EQ(Stmt::STEP, s[2]->kind);
+    EXPECT_EQ("(index a 0)", toString(*s[2]->target));
+    EXPECT_EQ(Stmt::STEP, s[3]->kind);
+    EXPECT_EQ("(* a)", toString(*s[3]->target));
+}
+
+TEST(ParserTest, AssignmentToAVariableHasNoTarget) {
+    Program program = parseSource(inMain("a = 3; a++;"));
+    EXPECT_FALSE(program.functions[0].body->statements[0]->target);
+    EXPECT_EQ("a", program.functions[0].body->statements[0]->name);
+    EXPECT_FALSE(program.functions[0].body->statements[1]->target);
+}
+
+TEST(ParserTest, StarThenIncrementIsAmbiguous) {
+    CompileError error = errorOf(inMain("*a++;"));
+    EXPECT_EQ(2, error.line);
+    EXPECT_NE(std::string::npos, error.message.find("(*")) << error.message;
+}
+
+TEST(ParserTest, CannotAssignToAnExpression) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a + 1 = 2;")).message.find("assign"));
+    EXPECT_NE(std::string::npos, errorOf(inMain("5 = a;")).message.find("statement"));
+}
+
+TEST(ParserTest, IndexedCompoundAssignmentOfLaterStagesIsNotSupportedYet) {
+    EXPECT_NE(std::string::npos, errorOf(inMain("a[1] *= 2;")).message.find("*="));
+}
+
+TEST(ParserTest, PointerDeclarationInAFor) {
+    Program program = parseSource(inMain("for (uint8_t *p = a; p < b; p++) ;"));
+    EXPECT_TRUE(firstStatement(program).init->type.isPointer);
+}

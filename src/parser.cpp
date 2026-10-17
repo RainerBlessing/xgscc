@@ -171,6 +171,17 @@ namespace
 			return result;
 		}
 
+		// ["*"] after the type: a pointer to it
+		Type withStars(const Type& base)
+		{
+			if (!isOperator("*"))
+				return base;
+			take();
+			if (isOperator("*"))
+				throw CompileError(peek().line, "pointers to pointers are not supported yet");
+			return pointerTo(base);
+		}
+
 		// declarations and functions
 
 		void topLevel(Program* result)
@@ -179,7 +190,10 @@ namespace
 				throw CompileError(peek().line, "unexpected " + describe(peek()) + ", expected a declaration or a function");
 			int line = peek().line;
 			Specifiers type = specifiers();
-			if (peek(1).type == Token::OPERATOR && peek(1).text == "(")
+			size_t stars = 0;
+			while (isOperator("*", stars))
+				stars++;
+			if (peek(stars + 1).type == Token::OPERATOR && peek(stars + 1).text == "(")
 			{
 				Function function = functionAfterType(type);
 				(function.body ? result->functions : result->prototypes).push_back(std::move(function));
@@ -196,7 +210,9 @@ namespace
 			Function result;
 			result.line = peek().line;
 			result.returnsValue = !type.isVoid;
-			result.returnType = type.type;
+			result.returnType = withStars(type.type);
+			if (type.isVoid && result.returnType.isPointer)
+				throw CompileError(result.line, "a pointer to void is not supported");
 			result.name = expectName();
 			expectOperator("(");
 			if (isWord("void") && isOperator(")", 1))
@@ -210,8 +226,10 @@ namespace
 					Specifiers parameterType = specifiers();
 					if (parameterType.isVoid)
 						throw CompileError(parameter.line, "a parameter cannot be void");
-					parameter.type = parameterType.type;
+					parameter.type = withStars(parameterType.type);
 					parameter.name = expectName();
+					if (isOperator("["))
+						throw CompileError(peek().line, "array parameters are not supported, use a pointer");
 					result.parameters.push_back(parameter);
 					if (!isOperator(","))
 						break;
@@ -228,24 +246,71 @@ namespace
 			return result;
 		}
 
-		// name [= expression] ; with the type already read
-		StmtPtr declarationAfterType(int line, const Specifiers& type, bool endsWithSemicolon = true)
+		// [*] name [ [size] ] [= initializer] ; with the type already read
+		StmtPtr declarationAfterType(int line, const Specifiers& specifiers, bool endsWithSemicolon = true)
 		{
-			if (type.isVoid)
+			if (specifiers.isVoid)
 				throw CompileError(line, "a variable cannot be void");
 			StmtPtr declaration(new Stmt(Stmt::DECLARATION, line));
-			declaration->type = type.type;
-			declaration->isStatic = type.isStatic;
-			declaration->isConst = type.isConst;
+			declaration->type = withStars(specifiers.type);
+			declaration->isStatic = specifiers.isStatic;
+			// "const uint8_t *p" is a pointer to constants, the pointer itself can change
+			declaration->isConst = specifiers.isConst && !declaration->type.isPointer;
 			declaration->name = expectName();
+			bool sizeGiven = false;
+			if (isOperator("["))
+			{
+				take();
+				if (peek().type == Token::NUMBER)
+				{
+					declaration->arraySize = take().value;
+					sizeGiven = true;
+					if (declaration->arraySize <= 0)
+						throw CompileError(line, "the size of the array '" + declaration->name + "' must be positive");
+				}
+				else if (!isOperator("]"))
+					throw CompileError(peek().line, "the size of an array must be a number");
+				expectOperator("]");
+				if (declaration->isConst)
+					throw CompileError(line, "const arrays (tables in ROM) are not supported yet");
+				declaration->arraySize = sizeGiven ? declaration->arraySize : -1;
+			}
 			if (isOperator("="))
 			{
 				take();
-				declaration->expr = expression();
+				if (declaration->arraySize != 0)
+					initializerList(*declaration, sizeGiven);
+				else if (isOperator("{"))
+					throw CompileError(peek().line, "an initializer list is only for arrays");
+				else
+					declaration->expr = expression();
 			}
+			if (declaration->arraySize == -1)
+				throw CompileError(line, "the size of the array '" + declaration->name + "' is missing");
 			if (endsWithSemicolon)
 				expectOperator(";");
 			return declaration;
+		}
+
+		// { value, value, ... } of an array; without a size the list gives it
+		void initializerList(Stmt& declaration, bool sizeGiven)
+		{
+			if (!isOperator("{"))
+				throw CompileError(peek().line, "an array needs an initializer list in { }");
+			take();
+			while (!isOperator("}"))
+			{
+				declaration.elements.push_back(expression());
+				if (!isOperator(","))
+					break;
+				take();
+			}
+			expectOperator("}");
+			int count = (int) declaration.elements.size();
+			if (!sizeGiven)
+				declaration.arraySize = count;
+			else if (count > declaration.arraySize)
+				throw CompileError(declaration.line, "too many initializers for the array '" + declaration.name + "'");
 		}
 
 		// statements
@@ -377,7 +442,21 @@ namespace
 			return result;
 		}
 
-		// an assignment or ++/--, without the semicolon
+		static bool isAssignable(const Expr& expr)
+		{
+			return expr.kind == Expr::VARIABLE || expr.kind == Expr::INDEX || (expr.kind == Expr::UNARY && expr.name == "*");
+		}
+
+		// the variable or the *p and a[i] that a statement changes
+		static void setTarget(Stmt& stmt, ExprPtr target)
+		{
+			if (target->kind == Expr::VARIABLE)
+				stmt.name = target->name;
+			else
+				stmt.target = std::move(target);
+		}
+
+		// an assignment, ++/-- or a call, without the semicolon
 		StmtPtr simpleStatement()
 		{
 			int line = peek().line;
@@ -385,32 +464,45 @@ namespace
 			{
 				StmtPtr result(new Stmt(Stmt::STEP, line));
 				result->op = take().text;
-				result->name = expectName();
+				ExprPtr target = unary();
+				if (!isAssignable(*target))
+					throw CompileError(line, "cannot assign to this expression");
+				setTarget(*result, std::move(target));
 				return result;
 			}
-			if (peek().type != Token::IDENT)
+			if (peek().type != Token::IDENT && !isOperator("*") && !isOperator("("))
 				throw CompileError(line, "expected a statement, found " + describe(peek()));
-			if (isOperator("(", 1))
+			ExprPtr target = unary();
+			if (target->kind == Expr::CALL)
 			{
 				StmtPtr result(new Stmt(Stmt::CALL, line));
-				result->expr = call();
+				result->expr = std::move(target);
 				return result;
 			}
-			string name = take().text;
-			if (isOperator("++") || isOperator("--"))
+			if (peek().type == Token::OPERATOR && (peek().text == "++" || peek().text == "--"))
 			{
+				if (target->kind == Expr::UNARY && target->name == "*" && !target->parenthesized)
+					throw CompileError(line, "'*p++' is not supported, write (*p)++ or p++");
+				if (!isAssignable(*target))
+					throw CompileError(line, "cannot assign to this expression");
 				StmtPtr result(new Stmt(Stmt::STEP, line));
-				result->name = name;
 				result->op = take().text;
+				setTarget(*result, std::move(target));
 				return result;
 			}
-			if (contains(LATER_ASSIGNMENTS, peek().text) && peek().type == Token::OPERATOR)
+			if (peek().type == Token::OPERATOR && contains(LATER_ASSIGNMENTS, peek().text))
 				throw CompileError(line, "operator '" + peek().text + "' is not supported yet");
 			if (peek().type != Token::OPERATOR || !contains(ASSIGNMENTS, peek().text))
-				throw CompileError(line, "'" + name + "' is no statement, expected an assignment, ++ or --");
+			{
+				if (target->kind == Expr::VARIABLE)
+					throw CompileError(line, "'" + target->name + "' is no statement, expected an assignment, ++ or --");
+				throw CompileError(line, "this expression is no statement, expected an assignment, ++ or --");
+			}
+			if (!isAssignable(*target))
+				throw CompileError(line, "cannot assign to this expression");
 			StmtPtr result(new Stmt(Stmt::ASSIGNMENT, line));
-			result->name = name;
 			result->op = take().text;
+			setTarget(*result, std::move(target));
 			result->expr = expression();
 			return result;
 		}
@@ -464,11 +556,16 @@ namespace
 				return node;
 			}
 			if (token.type == Token::OPERATOR && (token.text == "*" || token.text == "&"))
-				throw CompileError(token.line, "pointers are not supported yet");
+			{
+				ExprPtr node(new Expr(Expr::UNARY, token.line));
+				node->name = take().text;
+				node->left = unary();
+				return node;
+			}
 			if (isOperator("(") && peek(1).type == Token::IDENT && (isTypeName(peek(1).text) ||
 					peek(1).text == "void" || contains(OTHER_TYPES, peek(1).text)))
 				return cast();
-			return primary();
+			return postfix();
 		}
 
 		// name ( arguments )
@@ -491,6 +588,21 @@ namespace
 			return node;
 		}
 
+		// primary [ index ] ...
+		ExprPtr postfix()
+		{
+			ExprPtr node = primary();
+			while (isOperator("["))
+			{
+				ExprPtr index(new Expr(Expr::INDEX, take().line));
+				index->left = std::move(node);
+				index->right = expression();
+				expectOperator("]");
+				node = std::move(index);
+			}
+			return node;
+		}
+
 		// ( type ) operand
 		ExprPtr cast()
 		{
@@ -498,7 +610,7 @@ namespace
 			Specifiers type = specifiers();
 			if (type.isVoid)
 				throw CompileError(node->line, "a cast to void is not supported");
-			node->type = type.type;
+			node->type = withStars(type.type);
 			expectOperator(")");
 			node->left = unary();
 			return node;
@@ -526,6 +638,7 @@ namespace
 				take();
 				ExprPtr inner = binary(1);
 				expectOperator(")");
+				inner->parenthesized = true;
 				return inner;
 			}
 			throw unexpected("an expression");

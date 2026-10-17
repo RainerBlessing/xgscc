@@ -4,19 +4,35 @@
 #include <string>
 #include <vector>
 
-/** The integer types: 8 or 16 bits, signed or unsigned. */
+/**
+ * The integer types: 8 or 16 bits, signed or unsigned, and pointers to them.
+ * A pointer is the RAM address, one byte, unsigned.
+ */
 struct Type
 {
-	Type() : size(1), isSigned(false) {}
-	Type(int size, bool isSigned) : size(size), isSigned(isSigned) {}
-	bool operator==(const Type& other) const { return size == other.size && isSigned == other.isSigned; }
+	Type() : size(1), isSigned(false), isPointer(false), pointeeSize(0), pointeeSigned(false) {}
+	Type(int size, bool isSigned) : size(size), isSigned(isSigned), isPointer(false), pointeeSize(0), pointeeSigned(false) {}
+	bool operator==(const Type& other) const
+	{
+		return size == other.size && isSigned == other.isSigned && isPointer == other.isPointer &&
+			pointeeSize == other.pointeeSize && pointeeSigned == other.pointeeSigned;
+	}
 	bool operator!=(const Type& other) const { return !(*this == other); }
+
+	/** What a pointer points to. */
+	Type pointee() const { return Type(pointeeSize, pointeeSigned); }
 
 	int size;		// in bytes: 1 or 2
 	bool isSigned;
+	bool isPointer;
+	int pointeeSize;	// pointers: the size of the element, 1 or 2
+	bool pointeeSigned;
 };
 
-/** "uint8_t", "int8_t", "uint16_t" or "int16_t". */
+/** The type of a pointer to elements of the given type. */
+Type pointerTo(const Type& element);
+
+/** "uint8_t", "int8_t", "uint16_t", "int16_t" or one of them with " *". */
 std::string typeName(const Type& type);
 
 struct Expr;
@@ -26,15 +42,17 @@ typedef std::unique_ptr<Stmt> StmtPtr;
 
 struct Expr
 {
-	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST };
-	Expr(Kind kind, int line) : kind(kind), line(line), value(0) {}
+	enum Kind { NUMBER, VARIABLE, UNARY, BINARY, CALL, CAST, INDEX };
+	Expr(Kind kind, int line) : kind(kind), line(line), value(0), parenthesized(false) {}
 
 	Kind kind;
 	int line;
 	int value;		// NUMBER
-	std::string name;	// VARIABLE: the variable, UNARY and BINARY: the operator, CALL: the function
-	ExprPtr left;		// UNARY: the operand
-	ExprPtr right;
+	bool parenthesized;	// written in parentheses
+	std::string name;	// VARIABLE: the variable, UNARY and BINARY: the operator ("*" and "&" are
+				// dereference and address), CALL: the function
+	ExprPtr left;		// UNARY: the operand; INDEX: the array or pointer
+	ExprPtr right;		// INDEX: the index
 	std::vector<ExprPtr> arguments;	// CALL
 	Type type;		// CAST: the type it converts to; left is the operand
 };
@@ -42,11 +60,14 @@ struct Expr
 struct Stmt
 {
 	enum Kind { EMPTY, BLOCK, DECLARATION, ASSIGNMENT, STEP, CALL, IF, WHILE, DO_WHILE, FOR, RETURN, BREAK, CONTINUE };
-	Stmt(Kind kind, int line) : kind(kind), line(line), isStatic(false), isConst(false) {}
+	Stmt(Kind kind, int line) : kind(kind), line(line), arraySize(0), isStatic(false), isConst(false) {}
 
 	Kind kind;
 	int line;
 	std::string name;	// DECLARATION, ASSIGNMENT, STEP: the variable
+	ExprPtr target;		// ASSIGNMENT, STEP: what is changed if it is no plain variable (*p, a[i])
+	int arraySize;		// DECLARATION: the number of elements of an array, 0 if it is none
+	std::vector<ExprPtr> elements;	// DECLARATION of an array: the initializers
 	std::string op;		// ASSIGNMENT: "=", "+=", ...; STEP: "++" or "--"
 	Type type;		// DECLARATION
 	bool isStatic;		// DECLARATION
