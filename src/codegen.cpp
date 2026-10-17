@@ -84,6 +84,7 @@ namespace
 	struct Table
 	{
 		string label;
+		string name;
 		int line;
 		Type element;
 		vector<int> words;	// one byte per ROM word, a 16 bit element has two
@@ -250,13 +251,15 @@ namespace
 	class Generator
 	{
 	public:
-		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), loopDepth(0), temporariesInUse(0), nextLabel(0)
+		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), loopDepth(0), temporariesInUse(0), nextLabel(0), callDepth(0)
 		{
 			allocatable.insert(ACC_HIGH);
 			allocatable.insert(ACC_LOW);
+			labelNames[ACC_HIGH] = "acc_hi (high byte of 16 bit results)";
+			labelNames[ACC_LOW] = "acc_lo (kept while FSR points to data)";
 		}
 
-		string run(const Program& program, map<string, int>* globals, map<string, int>* highBytes)
+		string run(const Program& program, CodeInfo* info)
 		{
 			scopes.push_back(map<string, Variable>());
 			structDefinitions = program.structs;
@@ -270,9 +273,12 @@ namespace
 			map<string, int> addresses;
 			allocate(&addresses);
 			for (map<string, string>::const_iterator g = globalLabels.begin(); g != globalLabels.end(); ++g)
-				(*globals)[g->first] = addresses[g->second];
+				info->variables[g->first] = addresses[g->second];
 			for (map<string, string>::const_iterator g = globalHighLabels.begin(); g != globalHighLabels.end(); ++g)
-				(*highBytes)[g->first] = addresses[g->second];
+				info->highBytes[g->first] = addresses[g->second];
+			info->ram = ramEntries(addresses);
+			info->symbols = codeSymbols();
+			info->callDepth = callDepth;
 			return assembly(addresses);
 		}
 
@@ -304,6 +310,9 @@ namespace
 		ostringstream initialization;		// start code of the globals
 		vector<string> reachable;		// functions called from main, main first, in the order found
 		map<string, ParameterLabels> parameterNames;
+		map<string, string> labelNames;		// what a label is called in the map
+		vector<Block> allocatedBlocks;
+		int callDepth;
 
 		// functions
 
@@ -383,6 +392,17 @@ namespace
 			return "v_" + (current != NULL ? current->name + "_" : string()) + name;
 		}
 
+		void describe(const string& label, const string& text)
+		{
+			labelNames[label] = text;
+		}
+
+		string describeLabel(const string& label) const
+		{
+			map<string, string>::const_iterator found = labelNames.find(label);
+			return found == labelNames.end() ? label : found->second;
+		}
+
 		// a name that is no register: the address of an array
 		string newPlainLabel(const string& wanted)
 		{
@@ -422,21 +442,33 @@ namespace
 				variable.isArray = true;
 				variable.count = declaration.arraySize;
 				variable.lo = newPlainLabel(variableLabel(declaration.name));
+				describe(variable.lo, displayName(declaration) + "[" + decimal(declaration.arraySize) + "]");
 			}
 			else if (declaration.type.structId != 0)
 			{
 				variable.isStruct = true;
 				variable.lo = newPlainLabel(variableLabel(declaration.name));
+				describe(variable.lo, displayName(declaration) + " (struct " + structOf(declaration.type.structId).name + ")");
 				declareMembers(variable, declaration);
 			}
 			else
 			{
 				variable.lo = newLabel(variableLabel(declaration.name));
+				describe(variable.lo, displayName(declaration) + (declaration.type.size == 2 ? " (low byte)" : ""));
 				if (declaration.type.size == 2)
+				{
 					variable.hi = newLabel(variableLabel(declaration.name) + "_hi");
+					describe(variable.hi, displayName(declaration) + " (high byte)");
+				}
 			}
 			scope[declaration.name] = variable;
 			return variable;
+		}
+
+		// "name" of a global, "function.name" of a local, with " (static)"
+		string displayName(const Stmt& declaration) const
+		{
+			return (current != NULL ? current->name + "." : string()) + declaration.name + (declaration.isStatic ? " (static)" : "");
 		}
 
 		const StructDefinition& structOf(int id) const
@@ -800,6 +832,7 @@ namespace
 					" bytes, a table holds at most " + decimal(TABLE_WORDS));
 			Table table;
 			table.label = variable.lo;
+			table.name = displayName(declaration);
 			table.line = declaration.line;
 			table.element = variable.type;
 			for (int i = 0; i < variable.count; i++)
@@ -873,6 +906,7 @@ namespace
 				throw CompileError(line, "the expression is too complex (more than " + decimal(TEMPORARIES) + " temporaries)");
 			current->temporaries = max(current->temporaries, temporariesInUse + 1);
 			allocatable.insert(temporary(temporariesInUse));
+			describe(temporary(temporariesInUse), current->name + " temporary");
 			return temporariesInUse++;
 		}
 
@@ -2106,8 +2140,12 @@ namespace
 				return found->second;
 			ParameterLabels labels;
 			labels.lo = newLabel(wanted);
+			describe(labels.lo, function.name + "." + parameter.name + (parameter.type.size == 2 ? " (parameter, low byte)" : " (parameter)"));
 			if (parameter.type.size == 2)
+			{
 				labels.hi = newLabel(wanted + "_hi");
+				describe(labels.hi, function.name + "." + parameter.name + " (parameter, high byte)");
+			}
 			parameterNames[wanted] = labels;
 			return labels;
 		}
@@ -2769,6 +2807,7 @@ namespace
 			map<string, int> depths;
 			map<string, string> deepest;
 			int depth = depthOf("main", &depths, &deepest);
+			callDepth = depth;
 			if (depth <= RETURN_STACK)
 				return;
 			string chain = "main";
@@ -2899,6 +2938,7 @@ namespace
 			}
 			places = kept;
 
+			allocatedBlocks = blocks;
 			int blockBytes = 0;
 			for (size_t i = 0; i < blocks.size(); i++)
 				blockBytes += blocks[i].bytes;
@@ -3022,17 +3062,86 @@ namespace
 			return out.str();
 		}
 
+		// every place of the RAM that is used, with the names that live there
+		vector<RamEntry> ramEntries(const map<string, int>& addresses) const
+		{
+			vector<RamEntry> entries;
+			set<string> insideBlocks;
+			for (size_t i = 0; i < allocatedBlocks.size(); i++)
+			{
+				const Block& block = allocatedBlocks[i];
+				if (!block.high.empty())
+					continue;		// a 16 bit variable whose address is taken is listed as its two bytes
+				RamEntry entry = { addresses.at(block.label), block.bytes, describeLabel(block.label) };
+				entries.push_back(entry);
+				insideBlocks.insert(block.label);
+				for (size_t m = 0; m < block.members.size(); m++)
+					insideBlocks.insert(block.members[m].label);
+			}
+			map<int, vector<string> > byAddress;
+			for (map<string, int>::const_iterator a = addresses.begin(); a != addresses.end(); ++a)
+			{
+				if (!insideBlocks.count(a->first) && !arrayLabels.count(a->first))
+					byAddress[a->second].push_back(describeLabel(a->first));
+			}
+			for (map<int, vector<string> >::iterator at = byAddress.begin(); at != byAddress.end(); ++at)
+			{
+				sort(at->second.begin(), at->second.end());
+				string names;
+				for (size_t n = 0; n < at->second.size(); n++)
+					names += (n > 0 ? ", " : "") + at->second[n];
+				RamEntry entry = { at->first, 1, names };
+				entries.push_back(entry);
+			}
+			sort(entries.begin(), entries.end(), lessAddress);
+			return entries;
+		}
+
+		static bool lessAddress(const RamEntry& a, const RamEntry& b)
+		{
+			return a.address < b.address;
+		}
+
+		// the code and the tables whose addresses the assembler tells
+		vector<CodeSymbol> codeSymbols() const
+		{
+			vector<CodeSymbol> symbols;
+			CodeSymbol start = { "_start", "start code and main", "start", 0 };
+			symbols.push_back(start);
+			for (size_t i = 0; i < definitionOrder.size(); i++)
+			{
+				const FunctionInfo& function = functions.at(definitionOrder[i]);
+				if (&function == mainFunction || find(reachable.begin(), reachable.end(), function.name) == reachable.end())
+					continue;
+				CodeSymbol symbol = { function.entry, function.name, function.name.compare(0, 2, "__") == 0 ? "runtime" : "function", 0 };
+				symbols.push_back(symbol);
+			}
+			vector<Table> tables = reachableTables();
+			for (size_t i = 0; i < tables.size(); i++)
+			{
+				CodeSymbol symbol = { tables[i].label, tables[i].name, "table", (int) tables[i].words.size() };
+				symbols.push_back(symbol);
+			}
+			return symbols;
+		}
+
+		vector<Table> reachableTables() const
+		{
+			vector<Table> tables = globalTables;
+			for (size_t i = 0; i < reachable.size(); i++)
+			{
+				const vector<Table>& own = functions.at(reachable[i]).tables;
+				tables.insert(tables.end(), own.begin(), own.end());
+			}
+			return tables;
+		}
+
 		// The tables sit at the top of the ROM, below the reset vector, each inside
 		// one block of 256 words. The code is in the way if it grows that far; the
 		// assembler finds it.
 		string placeTables(ostringstream& equs, ostringstream& data)
 		{
-			vector<Table> tables = globalTables;
-			for (size_t i = 0; i < reachable.size(); i++)
-			{
-				const vector<Table>& own = functions[reachable[i]].tables;
-				tables.insert(tables.end(), own.begin(), own.end());
-			}
+			vector<Table> tables = reachableTables();
 			int cursor = 0xfff;		// the first word that is taken
 			for (size_t i = 0; i < tables.size(); i++)
 			{
@@ -3102,7 +3211,7 @@ namespace
 	};
 }
 
-string generateAssembly(const Program& program, map<string, int>* variables, map<string, int>* highBytes)
+string generateAssembly(const Program& program, CodeInfo* info)
 {
-	return Generator().run(program, variables, highBytes);
+	return Generator().run(program, info);
 }

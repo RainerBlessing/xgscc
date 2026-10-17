@@ -20,6 +20,7 @@ add_library(xgscc_lib STATIC
     src/parser.cpp
     src/runtime.cpp
     src/hexwriter.cpp
+    src/memorymap.cpp
 )
 target_include_directories(xgscc_lib PUBLIC src)
 target_link_libraries(xgscc_lib sxcpu)

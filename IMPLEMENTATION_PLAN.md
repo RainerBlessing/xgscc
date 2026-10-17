@@ -159,10 +159,20 @@ the one before):
    parameters), no nesting by value, no bit fields.
    Status: Complete
 7. **3g `--map`**: where every variable, function and table is, how much RAM
-   and ROM is used.
-   Status: Not Started
-- Decide at the end whether an IR is needed and whether to keep the own back end
-  (see *Decisions made*).
+   and ROM is used. `xgscc --map game.c -o game.hex` writes `game.map`. The
+   assembler gives the addresses of the labels for it (`assembleSource` got an
+   optional output for them).
+   Status: Complete
+- **Decision after stage 3: no IR, the own back end stays, SDCC is not needed.**
+  Syntax tree to assembler worked for everything in this stage; the odd parts of
+  the SX52 (banks, FSR with INDF, the return stack, `iread`, pages) are handled
+  where the code is made, and the tests run every program on the emulated chip, which
+  is what an IR would have to be checked against anyway. What an IR would help with,
+  better code (registers kept in W across statements, constants folded further,
+  common sub expressions), is stage 5 and can be done on the assembler text, where
+  the cost of an instruction is visible. SDCC would still need a new back end for the
+  banked RAM, the 8 entry return stack and the page registers, and it would not
+  know the XGS hardware.
 **Success Criteria**:
 - A sort of 16 bytes, a 16 bit counter with carry, a string copy and a table
   lookup run correctly.
@@ -173,7 +183,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3g next)
+**Status**: Complete
 
 ## Stage 4: the XGS library and the video kernel
 

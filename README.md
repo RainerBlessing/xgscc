@@ -6,6 +6,7 @@ file that [xgsemu](https://github.com/RainerBlessing/xgsemu) runs.
 ```bash
 xgscc game.c -o game.hex      # compile
 xgscc -S game.c -o game.asm   # the assembler source instead
+xgscc --map game.c -o game.hex   # also writes game.map: where everything is
 xgsemu game.hex
 ```
 
@@ -157,6 +158,30 @@ reports it as a program that is too big for the ROM.
 The start code (`org fff`, `jmp _start`) initializes the globals and the static
 variables and falls into the code of `main`. When `main` ends the
 program loops on a `jmp` to itself.
+
+## The map
+
+`--map` writes a text file next to the output (`game.hex` gives `game.map`) with the
+place of every variable, array and struct in the RAM (names that share a place are
+listed together), the address and size in words of the start code, every function,
+the runtime routines and the tables in the ROM, how much of both is free, and the
+deepest nesting of calls against the 8 entries of the return stack:
+
+```
+RAM: 24 of 118 bytes used, 94 free
+  address  bytes  name
+  0x0A         1  acc_hi (high byte of 16 bit results)
+  0x13         1  score (low byte)
+  0x74        12  sprites[4]
+
+ROM: 131 of 4096 words used, 3965 free
+  address  words  kind      name
+  0x000       73  start     start code and main
+  0x049        8  function  scale
+  0x051       33  runtime   __mul8u
+  0xFEF       16  table     sine
+  0xFFF        1  vector    reset vector
+```
 
 ## Build
 

@@ -78,6 +78,28 @@ TEST_F(CliTest, DashSWritesTheAssembler) {
     EXPECT_NE(std::string::npos, assembly.find("inc v_counter")) << assembly;
 }
 
+TEST_F(CliTest, DashDashMapWritesTheMapNextToTheOutput) {
+    Result result = xgscc("--map " + quoted(EXAMPLES_DIR "/functions.c") + " -o " + quoted(dir + "/game.hex"));
+    EXPECT_EQ(0, result.exitCode) << result.output;
+    std::string map = readFile(dir + "/game.map");
+    EXPECT_NE(std::string::npos, map.find("RAM")) << map;
+    EXPECT_NE(std::string::npos, map.find("square_sum")) << map;
+    EXPECT_NE(std::string::npos, map.find("total")) << map;
+    EXPECT_FALSE(readFile(dir + "/game.hex").empty());
+}
+
+TEST_F(CliTest, NoMapWithoutTheOption) {
+    std::remove((dir + "/nomap.map").c_str());
+    xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/nomap.hex"));
+    EXPECT_EQ("", readFile(dir + "/nomap.map"));
+}
+
+TEST_F(CliTest, MapWithTheAssemblerOutputToo) {
+    Result result = xgscc("-S --map " + quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/c.asm"));
+    EXPECT_EQ(0, result.exitCode) << result.output;
+    EXPECT_NE(std::string::npos, readFile(dir + "/c.map").find("counter"));
+}
+
 TEST_F(CliTest, ErrorsNameFileAndLineAndFail) {
     writeFile(dir + "/bad.c", "uint8_t a;\nvoid main(void) {\n  a = b;\n}\n");
     Result result = xgscc(quoted(dir + "/bad.c") + " -o " + quoted(dir + "/bad.hex"));
