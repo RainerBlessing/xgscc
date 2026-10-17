@@ -11,6 +11,7 @@ struct ProgramRun
 	bool halted;			// the program ended in its "jmp to itself"
 	long steps;			// executed instructions
 	unsigned char ram[256];
+	unsigned char mode;		// the MODE register after the run
 
 	// the value of a global variable after the run (the low byte of a 16 bit one)
 	int value(const std::string& name) const;

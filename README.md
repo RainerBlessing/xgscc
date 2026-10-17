@@ -76,8 +76,15 @@ void add(uint8_t value)
   (write `*p` and `p++` separately).
 - **Preprocessor**: `#include` is ignored, `#define NAME tokens` and `#undef NAME`
   work. Nothing else (no `#if`, no macros with parameters) yet.
-- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, `const` tables in
-  ROM, string literals, `switch`, `goto`, `struct`. The compiler
+- **Tables in ROM**: a `const` array is a table in the program memory and takes no
+  RAM: `const uint8_t sine[64] = { ... };`, `const uint16_t steps[] = { 1000, 800 };`,
+  `const uint8_t text[] = "Hello";` (the string ends with a 0). It is read with an
+  index, `sine[i]`, and only that: it has no address, it cannot be passed to a function
+  and not changed. A table holds at most 256 bytes (128 elements of 16 bits), each
+  byte takes one ROM word. A string also initializes a RAM array:
+  `uint8_t line[] = "ready";`.
+- **Not yet**: `* / %`, shifts by a variable amount, `int`/`long`, `switch`, `goto`,
+  `struct`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the
@@ -121,6 +128,12 @@ pages of 512 words, and where code runs on into the next page. A called function
 starts at the beginning of a page or in the first half of one (a `call` reaches no
 further) and ends with `retp`, which gives the page back. `page` costs a cycle;
 the video code of stage 4 will be written without it.
+
+The tables sit at the top of the ROM, below the reset vector, each inside one block
+of 256 words: `iread` takes the high bits of the address from MODE and the low byte
+from W. A read sets MODE (`mov m, #page`; bit 4, which the port control uses, is kept)
+and leaves its low bits 0 afterwards. If the code grows into the tables the assembler
+reports it as a program that is too big for the ROM.
 
 The start code (`org fff`, `jmp _start`) initializes the globals and the static
 variables and falls into the code of `main`. When `main` ends the

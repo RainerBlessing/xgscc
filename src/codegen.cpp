@@ -52,6 +52,7 @@ using namespace std;
 namespace
 {
 	const int TEMPORARIES = 12;			// bytes per function
+	const int TABLE_WORDS = 256;			// a table has to fit into one block of 256 ROM words: iread takes the low byte of the address from W
 	const int RETURN_STACK = 8;			// entries of the hardware return stack
 	const int DIRECT_FIRST = 0x0a;			// the direct registers 0x0A-0x0F
 	const int DIRECT_LAST = 0x0f;
@@ -67,14 +68,24 @@ namespace
 
 	struct Variable
 	{
-		Variable() : isConst(false), value(0), isArray(false), count(0) {}
+		Variable() : isConst(false), value(0), isArray(false), isTable(false), count(0) {}
 		Type type;		// of an array: of its elements
 		string lo;		// the names in the assembler source
 		string hi;		// of a 16 bit variable
 		bool isConst;		// a constant, takes no RAM
 		long value;
 		bool isArray;		// lo is the physical address of the first element
-		int count;		// elements of an array
+		bool isTable;		// a const array: in ROM, read with iread
+		int count;		// elements of an array or table
+	};
+
+	// a const array in the ROM
+	struct Table
+	{
+		string label;
+		int line;
+		Type element;
+		vector<int> words;	// one byte per ROM word, a 16 bit element has two
 	};
 
 	// RAM that has to be one run of addresses: an array, or a 16 bit variable whose address is taken
@@ -108,6 +119,7 @@ namespace
 		vector<string> localLabels;
 		vector<string> staticLabels;
 		vector<Block> blocks;	// arrays: they keep their place, the frames of functions are shared
+		vector<Table> tables;
 		int temporaries;	// the most that were in use at a time
 		map<string, int> calls;	// the functions called -> line of the first call
 		ostringstream code;
@@ -275,6 +287,7 @@ namespace
 		bool usesLowByte;
 		map<string, string> addressTaken;	// low byte of a variable whose address is taken -> its high byte, if it has one
 		vector<Block> globalBlocks;
+		vector<Table> globalTables;
 		set<string> arrayLabels;		// the addresses of arrays are no registers
 		int loopDepth;
 		int temporariesInUse;
@@ -379,8 +392,14 @@ namespace
 			Variable variable;
 			variable.type = declaration.type;
 			if (declaration.isConst && declaration.arraySize != 0)
-				throw CompileError(declaration.line, "const arrays (tables in ROM) are not supported by the code generator yet");
-			if (declaration.isConst)
+			{
+				if (declaration.type.isPointer)
+					throw CompileError(declaration.line, "tables of pointers are not supported");
+				variable.isTable = true;
+				variable.count = declaration.arraySize;
+				variable.lo = newPlainLabel(variableLabel(declaration.name));
+			}
+			else if (declaration.isConst)
 			{
 				long value;
 				if (!declaration.expr || !fold(*declaration.expr, &value))
@@ -436,7 +455,16 @@ namespace
 			if (expr.kind != Expr::VARIABLE)
 				return false;
 			const Variable& variable = lookup(expr.name, expr.line);
-			return !variable.isConst && !variable.isArray;
+			return !variable.isConst && !variable.isArray && !variable.isTable;
+		}
+
+		// the table that base names, if it names one
+		const Variable* tableNamed(const Expr& base) const
+		{
+			if (base.kind != Expr::VARIABLE)
+				return NULL;
+			const Variable& variable = lookup(base.name, base.line);
+			return variable.isTable ? &variable : NULL;
 		}
 
 		static void checkFits(long value, const Type& type, int line)
@@ -603,6 +631,11 @@ namespace
 			Variable variable = declare(declaration);
 			if (variable.isConst)
 				return;
+			if (variable.isTable)
+			{
+				globalTables.push_back(tableOf(declaration, variable));
+				return;
+			}
 			if (variable.isArray)
 			{
 				globalBlocks.push_back(blockOf(variable));
@@ -621,6 +654,36 @@ namespace
 			initialize(initialization, declaration, variable);
 		}
 
+		// the bytes of a const table: the values, then zeros up to its size
+		Table tableOf(const Stmt& declaration, const Variable& variable)
+		{
+			if (declaration.elements.empty())
+				throw CompileError(declaration.line, "the const table '" + declaration.name + "' needs initial values");
+			if (variable.count * variable.type.size > TABLE_WORDS)
+				throw CompileError(declaration.line, "the table '" + declaration.name + "' has " + decimal(variable.count * variable.type.size) +
+					" bytes, a table holds at most " + decimal(TABLE_WORDS));
+			Table table;
+			table.label = variable.lo;
+			table.line = declaration.line;
+			table.element = variable.type;
+			for (int i = 0; i < variable.count; i++)
+			{
+				long value = 0;
+				if (i < (int) declaration.elements.size())
+				{
+					const Expr& element = *declaration.elements[i];
+					if (!fold(element, &value))
+						throw CompileError(element.line, "the value in the table '" + declaration.name + "' is not constant");
+					checkFits(value, variable.type, element.line);
+					value = wrapTo(value, variable.type);
+				}
+				table.words.push_back((int) (value & 0xff));
+				if (variable.type.size == 2)
+					table.words.push_back((int) ((value >> 8) & 0xff));
+			}
+			return table;
+		}
+
 		static Block blockOf(const Variable& variable)
 		{
 			Block block;
@@ -634,6 +697,11 @@ namespace
 			Variable variable = declare(stmt);
 			if (variable.isConst)
 				return;
+			if (variable.isTable)
+			{
+				current->tables.push_back(tableOf(stmt, variable));
+				return;
+			}
 			if (variable.isArray)
 			{
 				current->blocks.push_back(blockOf(variable));
@@ -830,7 +898,12 @@ namespace
 			switch (expr.kind)
 			{
 			case Expr::VARIABLE:
-				return valueType(lookup(expr.name, expr.line));
+			{
+				const Variable& variable = lookup(expr.name, expr.line);
+				if (variable.isTable)
+					throw CompileError(expr.line, "the ROM table '" + expr.name + "' can only be indexed, it has no address");
+				return valueType(variable);
+			}
 			case Expr::CALL:
 			{
 				FunctionInfo& callee = lookupFunction(expr.name, expr.line);
@@ -841,6 +914,8 @@ namespace
 			case Expr::INDIRECT:
 				return expr.type;
 			case Expr::INDEX:
+				if (const Variable* table = tableNamed(*expr.left))
+					return table->type;
 				return pointee(typeOf(*expr.left), expr.line, "only arrays and pointers can be indexed");
 			case Expr::UNARY:
 				if (expr.name == "!")
@@ -904,6 +979,8 @@ namespace
 				return pointerTo(variable.type);
 			}
 			case Expr::INDEX:
+				if (tableNamed(*operand.left))
+					throw CompileError(line, "cannot take the address of an element of the ROM table '" + operand.left->name + "'");
 				return pointerTo(typeOf(operand));
 			case Expr::UNARY:
 				if (operand.name == "*")
@@ -1120,6 +1197,8 @@ namespace
 			case Expr::VARIABLE:
 			{
 				const Variable& variable = lookup(expr.name, expr.line);
+				if (variable.isTable)
+					throw CompileError(expr.line, "the ROM table '" + expr.name + "' can only be indexed, it has no address");
 				if (variable.isArray)
 				{
 					emit("mov w, #" + variable.lo);		// the address of the first element
@@ -1137,6 +1216,11 @@ namespace
 			case Expr::INDEX:
 			{
 				Type element = typeOf(expr);
+				if (const Variable* table = tableNamed(*expr.left))
+				{
+					loadTableElement(*table, *expr.right, expr.line);
+					return element;
+				}
 				addressOfElement(*expr.left, *expr.right, expr.line);
 				loadThrough(element);
 				return element;
@@ -1216,6 +1300,42 @@ namespace
 				emit("mov w, " + temporary(t));
 				freeTemporary();
 			}
+		}
+
+		// W (and acc_hi) = table[index]: the address of the element is put together
+		// from the base of the table and the offset, the upper bits go to MODE and
+		// iread reads the ROM word. MODE has to be set before every iread: a read
+		// leaves the high bits of the word (0) in it. Bit 4 of MODE, which the port
+		// control uses, is kept by "mov m, #".
+		void loadTableElement(const Variable& table, const Expr& index, int line)
+		{
+			long constantIndex;
+			if (fold(index, &constantIndex) && (constantIndex < 0 || constantIndex >= table.count))
+				throw CompileError(index.line, "the index " + decimal(constantIndex) + " is outside of the table (" +
+					decimal(table.count) + " elements)");
+			scaledOffset(index, table.type.size, line);
+			int t = allocateTemporary(line);
+			emit("mov " + temporary(t) + ", w");
+			emit("mov w, #" + table.lo + "_base");
+			emit("add w, " + temporary(t));
+			if (table.type.size == 1)
+			{
+				emit("mov m, #" + table.lo + "_page");
+				emit("iread");
+				freeTemporary();
+				return;
+			}
+			emit("mov " + temporary(t) + ", w");
+			emit("mov m, #" + table.lo + "_page");
+			emit("iread");
+			emit("mov " + accLow() + ", w");
+			emit("inc " + temporary(t));
+			emit("mov w, " + temporary(t));
+			emit("mov m, #" + table.lo + "_page");
+			emit("iread");
+			emit("mov " + accHigh() + ", w");
+			emit("mov w, " + accLow());
+			freeTemporary();
 		}
 
 		// W = the address of base[index]
@@ -1896,6 +2016,8 @@ namespace
 		void assignment(const Stmt& stmt)
 		{
 			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			if (variable.isTable)
+				throw CompileError(stmt.line, "the ROM table '" + stmt.name + "' cannot be assigned to");
 			if (variable.isArray)
 				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be assigned to");
 			if (stmt.op == "=")
@@ -1915,6 +2037,8 @@ namespace
 		void step(const Stmt& stmt)
 		{
 			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			if (variable.isTable)
+				throw CompileError(stmt.line, "the ROM table '" + stmt.name + "' cannot be changed");
 			if (variable.isArray)
 				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be changed");
 			bool increment = stmt.op == "++";
@@ -1941,8 +2065,15 @@ namespace
 		}
 
 		// *p = value, a[i] = value, and with an operator: a[i] += value
+		void refuseTableTarget(const Expr& target) const
+		{
+			if (target.kind == Expr::INDEX && tableNamed(*target.left))
+				throw CompileError(target.line, "the ROM table '" + target.left->name + "' cannot be changed");
+		}
+
 		void assignThrough(const Stmt& stmt)
 		{
+			refuseTableTarget(*stmt.target);
 			Type element = typeOf(*stmt.target);
 			string op = stmt.op.substr(0, stmt.op.size() - 1);
 			changeThrough(*stmt.target, element, op, *stmt.expr, stmt.line);
@@ -1951,6 +2082,7 @@ namespace
 		// *p++ and a[i]-- change the element by one
 		void stepThrough(const Stmt& stmt)
 		{
+			refuseTableTarget(*stmt.target);
 			Type element = typeOf(*stmt.target);
 			Expr one(Expr::NUMBER, stmt.line);
 			one.value = 1;
@@ -2399,9 +2531,52 @@ namespace
 			return out.str();
 		}
 
+		// The tables sit at the top of the ROM, below the reset vector, each inside
+		// one block of 256 words. The code is in the way if it grows that far; the
+		// assembler finds it.
+		string placeTables(ostringstream& equs, ostringstream& data)
+		{
+			vector<Table> tables = globalTables;
+			for (size_t i = 0; i < reachable.size(); i++)
+			{
+				const vector<Table>& own = functions[reachable[i]].tables;
+				tables.insert(tables.end(), own.begin(), own.end());
+			}
+			int cursor = 0xfff;		// the first word that is taken
+			for (size_t i = 0; i < tables.size(); i++)
+			{
+				const Table& table = tables[i];
+				int size = (int) table.words.size();
+				int start = cursor - size;
+				if (start < 0 || (start >> 8) != ((cursor - 1) >> 8))
+				{
+					cursor = ((cursor - 1) >> 8) << 8;
+					start = cursor - size;
+				}
+				if (start < 0)
+					throw CompileError(table.line, "the tables do not fit into the ROM");
+				cursor = start;
+				equs << table.label << "_page equ " << hexText(start >> 8) << "\n";
+				equs << table.label << "_base equ " << hexText(start & 0xff) << "\n";
+				data << "        org " << hexText(start) << "\n" << table.label << ":\n";
+				for (size_t w = 0; w < table.words.size(); w += 8)
+				{
+					data << "        dw ";
+					for (size_t k = w; k < table.words.size() && k < w + 8; k++)
+						data << (k > w ? ", " : "") << hexText(table.words[k]);
+					data << "\n";
+				}
+			}
+			return "";
+		}
+
 		string assembly(const map<string, int>& addresses)
 		{
+			ostringstream tableEquals;
+			ostringstream tableData;
+			placeTables(tableEquals, tableData);
 			ostringstream out;
+			out << tableEquals.str();
 			for (map<string, int>::const_iterator a = addresses.begin(); a != addresses.end(); ++a)
 			{
 				// an array is named by its address, a variable by its register
@@ -2430,6 +2605,7 @@ namespace
 				body << "        firsthalf\n" << function.code.str();
 			}
 			out << resolveBanks(body.str(), addresses);
+			out << tableData.str();
 			return out.str();
 		}
 	};

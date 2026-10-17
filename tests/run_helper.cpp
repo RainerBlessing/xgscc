@@ -24,6 +24,7 @@ ProgramRun runProgram(const std::string& source, long maxSteps)
 	run.halted = false;
 	run.steps = 0;
 	memset(run.ram, 0, sizeof(run.ram));
+	run.mode = 0;
 	run.compiled = compile(source, "test.c");
 	if (!run.compiled.ok)
 		return run;
@@ -43,5 +44,6 @@ ProgramRun runProgram(const std::string& source, long maxSteps)
 		}
 	}
 	memcpy(run.ram, cpu.getRAM(), sizeof(run.ram));
+	run.mode = *cpu.getMode();
 	return run;
 }

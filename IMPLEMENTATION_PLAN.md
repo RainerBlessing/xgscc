@@ -143,8 +143,10 @@ the one before):
 4. **3d Constant tables in ROM.** `const uint8_t t[] = { ... }` read with
    `mov m,#hi / iread` (needs the new assembler directive `align`; the table
    sits on a 256 word boundary, an index is 8 bit). Reading changes only the low
-   nibble of MODE, bit 4 (the port control) stays.
-   Status: Not Started
+   nibble of MODE, bit 4 (the port control) stays. The compiler places the tables at
+   the top of the ROM itself, so no `align` directive was needed; string literals
+   also initialize RAM arrays.
+   Status: Complete
 5. **3e `*`, `/`, `%` and variable shifts** as runtime routines in assembler, in
    the program only when used.
    Status: Not Started
@@ -165,7 +167,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3d next)
+**Status**: In Progress (3e next)
 
 ## Stage 4: the XGS library and the video kernel
 
