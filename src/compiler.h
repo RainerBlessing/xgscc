@@ -2,12 +2,14 @@
 #define COMPILER_H_
 #include <map>
 #include <string>
+#include <vector>
 
 struct CompileResult
 {
 	bool ok;
 	std::string error;		// "file:line: message" if !ok
 	std::string assembly;		// the generated source for assembleSource()
+	std::vector<unsigned short> rom;	// the assembled program, 4096 words (0xFFF is empty)
 	std::map<std::string, int> variables;	// name of a global -> RAM address
 };
 

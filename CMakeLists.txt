@@ -13,6 +13,7 @@ endif()
 add_subdirectory(sxcpu)
 
 add_library(xgscc_lib STATIC
+    src/codegen.cpp
     src/compiler.cpp
     src/lexer.cpp
     src/ast.cpp
@@ -40,6 +41,13 @@ if(BUILD_TESTS)
 
     file(GLOB TEST_SOURCES "tests/*.cpp")
     add_executable(unit_tests ${TEST_SOURCES})
+    target_include_directories(unit_tests PRIVATE tests)
+    target_compile_definitions(unit_tests PRIVATE
+        XGSCC_PATH="$<TARGET_FILE:xgscc>"
+        EXAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples"
+    )
+    # the command line tests start the program
+    add_dependencies(unit_tests xgscc)
     target_link_libraries(unit_tests gtest gtest_main xgscc_lib)
     include(GoogleTest)
     gtest_discover_tests(unit_tests)

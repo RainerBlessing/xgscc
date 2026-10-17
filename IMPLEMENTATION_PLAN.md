@@ -77,8 +77,9 @@ start code.
 (accepted, no real preprocessor yet).
 **Success Criteria**:
 - `xgscc counter.c -o counter.hex` writes a hex file that `xgsemu` runs.
-- Start code: `org fff` / `jmp _start`, `_start` in page 0 clears the RAM it needs
-  and calls `main`.
+- Start code: `org fff` / `jmp _start`, `_start` in page 0 selects bank 1,
+  initializes the globals and falls into the code of `main` (a real call comes with
+  functions in Stage 2).
 - Errors carry file and line (`counter.c:7: unknown name cnt`).
 **Tests**:
 - Lexer: tokens, numbers (decimal, hex), comments, line numbers.
@@ -87,7 +88,7 @@ start code.
   every operator with a few values including wraparound at 255, a countdown
   loop, `if`/`else`, nested loops, comparisons at the edges (0, 1, 127, 128, 255).
 - `counter.c` from `doc/compiler.txt` as the first end-to-end test.
-**Status**: In Progress (project skeleton and hex writer done)
+**Status**: Complete
 
 ## Stage 2: functions and static memory
 
