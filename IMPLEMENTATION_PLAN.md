@@ -117,18 +117,42 @@ start code.
 
 ## Stage 3: bigger types, pointers and the RAM layout
 
-**Goal**: What a game needs: 16 bit values, arrays, pointers, constant tables.
+**Goal**: What a game needs: more RAM, 16 bit values, arrays, pointers, constant
+tables, multiply and divide.
 **Subset adds**: `int8_t`, `uint16_t`, `int16_t`, arrays, pointers (through
-FSR/INDF), `const` arrays in ROM, `switch`, `*`, `/`, `%` as runtime routines,
+FSR/INDF), `const` arrays in ROM, `switch`, `*`, `/`, `%`, shifts by a variable,
 struct without bit fields.
-**Design**:
-- A RAM allocator over the banks. Globals are grouped by bank so that bank changes
-  are rare. Access to a variable in another bank sets FSR or uses `bank`.
-- Runtime library in assembler (`crt/`): 8x8 and 16x16 multiply, divide, shifts by
-  a variable amount, 16 bit compare.
-- ROM tables through `retw`/`iread`; `const uint8_t table[]` is read-only data.
-- Decide here whether an IR is needed and whether to keep the own back end (see
-  *Decisions made*).
+**Steps** (each one is committed with its tests, in this order because each needs
+the one before):
+1. **3a RAM in all banks.** Banks 1-7 plus the six direct registers: 118 bytes
+   instead of 22. The code uses `@bank name` markers; after the addresses are
+   chosen a pass writes `bank n` only where the bank changes (unknown after a
+   label, a call or an indirect access). The most used variables (loops count
+   more) get the direct registers, then the first bank, and so on.
+   Status: Not Started
+2. **3b Types.** `int8_t`, `uint16_t`, `int16_t`, casts, usual conversions
+   (the larger size wins, unsigned wins a tie), 16 bit values in functions
+   (result in W and a register for the high byte), signed compares.
+   Status: Not Started
+3. **3c Pointers and arrays** of RAM through FSR/INDF. A pointer is the 8 bit RAM
+   address. Indexing, `&x`, `*p`, pointer arguments, strings as `const` data
+   in ROM come with 3d.
+   Status: Not Started
+4. **3d Constant tables in ROM.** `const uint8_t t[] = { ... }` read with
+   `mov m,#hi / iread` (needs the new assembler directive `align`; the table
+   sits on a 256 word boundary, an index is 8 bit). Reading changes only the low
+   nibble of MODE, bit 4 (the port control) stays.
+   Status: Not Started
+5. **3e `*`, `/`, `%` and variable shifts** as runtime routines in assembler, in
+   the program only when used.
+   Status: Not Started
+6. **3f `switch` and `struct`.**
+   Status: Not Started
+7. **3g `--map`**: where every variable, function and table is, how much RAM
+   and ROM is used.
+   Status: Not Started
+- Decide at the end whether an IR is needed and whether to keep the own back end
+  (see *Decisions made*).
 **Success Criteria**:
 - A sort of 16 bytes, a 16 bit counter with carry, a string copy and a table
   lookup run correctly.
@@ -139,7 +163,7 @@ struct without bit fields.
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: Not Started
+**Status**: In Progress (3a)
 
 ## Stage 4: the XGS library and the video kernel
 
