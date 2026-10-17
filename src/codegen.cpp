@@ -20,9 +20,13 @@ using namespace std;
 // is refused. The addresses are chosen after all code is made: the code uses
 // names and the assembler source defines them with "equ".
 //
-// The RAM at 0x0A-0x0F and 0x10-0x1F is used (the start code selects bank 1,
-// so that 0x10-0x1F is RAM and not the special registers that bank 0 shows
-// there).
+// The RAM is the six direct registers 0x0A-0x0F and the banks 1-7 (0x10-0x7f):
+// 118 bytes. An instruction reaches a banked byte as register 0x10-0x1F of the
+// bank that FSR selects. The code only says "@bank name" in front of the
+// instructions that use a variable; when the addresses are known a pass writes
+// "bank n" where the bank is not already selected. The bank is unknown at the
+// start of a function and after a label or a call. The most used variables
+// (those in loops count more) get the direct registers, which need no bank.
 //
 // All values are 8 bit and unsigned, constant expressions too: 2 - 3 is 255.
 // A comparison compares with "mov w, a-w": the carry is set if a >= w.
@@ -38,8 +42,10 @@ namespace
 {
 	const int TEMPORARIES = 4;			// per function
 	const int RETURN_STACK = 8;			// entries of the hardware return stack
-	const int RAM_FIRST = 0x0a;
-	const int RAM_LAST = 0x1f;
+	const int DIRECT_FIRST = 0x0a;			// the direct registers 0x0A-0x0F
+	const int DIRECT_LAST = 0x0f;
+	const int BANKED_FIRST = 0x10;			// banks 1-7
+	const int BANKED_LAST = 0x7f;
 
 	struct Variable
 	{
@@ -114,7 +120,7 @@ namespace
 	class Generator
 	{
 	public:
-		Generator() : current(NULL), mainFunction(NULL), temporariesInUse(0), nextLabel(0) {}
+		Generator() : current(NULL), mainFunction(NULL), loopDepth(0), temporariesInUse(0), nextLabel(0) {}
 
 		string run(const Program& program, map<string, int>* globals)
 		{
@@ -143,6 +149,9 @@ namespace
 		map<string, string> globalLabels;	// name of a global -> label
 		set<string> usedLabels;
 		vector<LoopLabels> loops;
+		set<string> allocatable;		// labels of variables and temporaries
+		map<string, int> weights;		// how much each of them is used
+		int loopDepth;
 		int temporariesInUse;
 		int nextLabel;
 		ostringstream initialization;		// start code of the globals
@@ -204,12 +213,14 @@ namespace
 
 		// variables
 
+		// a name for a variable, made known to the allocator
 		string newLabel(const string& wanted)
 		{
 			string label = wanted;
 			while (usedLabels.count(label))
 				label += "_";
 			usedLabels.insert(label);
+			allocatable.insert(label);
 			return label;
 		}
 
@@ -272,10 +283,9 @@ namespace
 			if (declaration.expr && !fold(*declaration.expr, &value))
 				throw CompileError(declaration.line, "the initializer of '" + declaration.name + "' is not constant");
 			if (value == 0)
-				out << "        clr " << variable.label << "\n";
+				out << instructionLines("clr " + variable.label);
 			else
-				out << "        mov w, #" << hexText(value) << "\n"
-					"        mov " << variable.label << ", w\n";
+				out << instructionLines("mov w, #" + hexText(value)) << instructionLines("mov " + variable.label + ", w");
 		}
 
 		void declareGlobal(const Stmt& declaration)
@@ -311,6 +321,7 @@ namespace
 			if (temporariesInUse >= TEMPORARIES)
 				throw CompileError(line, "the expression is too complex (more than " + decimal(TEMPORARIES) + " temporaries)");
 			current->temporaries = max(current->temporaries, temporariesInUse + 1);
+			allocatable.insert(temporary(temporariesInUse));
 			return temporariesInUse++;
 		}
 
@@ -326,9 +337,45 @@ namespace
 
 		// output
 
+		// The instruction as source lines. An instruction that uses a variable
+		// is preceded by "@bank name"; the weight of the variable counts the
+		// loops around the use.
+		string instructionLines(const string& instruction)
+		{
+			string lines;
+			string used;
+			size_t operands = instruction.find(' ');
+			for (size_t i = operands == string::npos ? instruction.size() : operands; i < instruction.size();)
+			{
+				if (!isalnum((unsigned char) instruction[i]) && instruction[i] != '_')
+				{
+					i++;
+					continue;
+				}
+				size_t end = i;
+				while (end < instruction.size() && (isalnum((unsigned char) instruction[end]) || instruction[end] == '_'))
+					end++;
+				string word = instruction.substr(i, end - i);
+				if (allocatable.count(word))
+				{
+					if (!used.empty() && used != word)
+						throw CompileError(0, "internal error: '" + instruction + "' uses two variables");
+					used = word;
+				}
+				i = end;
+			}
+			if (!used.empty())
+			{
+				int weight = 1 << (3 * min(loopDepth, 3));
+				weights[used] += weight;
+				lines += "        @bank " + used + "\n";
+			}
+			return lines + "        " + instruction + "\n";
+		}
+
 		void emit(const string& instruction)
 		{
-			current->code << "        " << instruction << "\n";
+			current->code << instructionLines(instruction);
 		}
 
 		void label(const string& name)
@@ -766,6 +813,7 @@ namespace
 		{
 			current = &function;
 			temporariesInUse = 0;
+			loopDepth = 0;
 			loops.clear();
 			ensureParameterLabels(function);
 
@@ -913,11 +961,13 @@ namespace
 			string top = newJumpLabel();
 			string end = newJumpLabel();
 			label(top);
+			loopDepth++;
 			jumpIfFalse(*stmt.expr, end);
 			LoopLabels labels = { end, top };
 			loops.push_back(labels);
 			statement(*stmt.body);
 			loops.pop_back();
+			loopDepth--;
 			emit("jmp " + top);
 			label(end);
 		}
@@ -928,12 +978,14 @@ namespace
 			string next = newJumpLabel();
 			string end = newJumpLabel();
 			label(top);
+			loopDepth++;
 			LoopLabels labels = { end, next };
 			loops.push_back(labels);
 			statement(*stmt.body);
 			loops.pop_back();
 			label(next);
 			jumpIfTrue(*stmt.expr, top);
+			loopDepth--;
 			label(end);
 		}
 
@@ -946,6 +998,7 @@ namespace
 			string next = newJumpLabel();
 			string end = newJumpLabel();
 			label(top);
+			loopDepth++;
 			if (stmt.expr)
 				jumpIfFalse(*stmt.expr, end);
 			LoopLabels labels = { end, next };
@@ -955,6 +1008,7 @@ namespace
 			label(next);
 			if (stmt.step)
 				statement(*stmt.step);
+			loopDepth--;
 			emit("jmp " + top);
 			label(end);
 			scopes.pop_back();
@@ -1052,16 +1106,23 @@ namespace
 			return (int) function.localLabels.size() + function.temporaries;
 		}
 
-		// Gives every label an address.
+		// Gives every label its RAM address.
 		void allocate(map<string, int>* addresses)
 		{
-			vector<string> unique = uniqueLabels;
+			// the places: every variable with an address of its own, and the
+			// places of the frames, which functions share
+			vector<vector<string> > places;
+			for (size_t i = 0; i < uniqueLabels.size(); i++)
+				places.push_back(vector<string>(1, uniqueLabels[i]));
 			for (size_t i = 0; i < reachable.size(); i++)
 			{
 				const FunctionInfo& function = functions[reachable[i]];
-				unique.insert(unique.end(), function.parameterLabels.begin(), function.parameterLabels.end());
-				unique.insert(unique.end(), function.staticLabels.begin(), function.staticLabels.end());
+				for (size_t p = 0; p < function.parameterLabels.size(); p++)
+					places.push_back(vector<string>(1, function.parameterLabels[p]));
+				for (size_t p = 0; p < function.staticLabels.size(); p++)
+					places.push_back(vector<string>(1, function.staticLabels[p]));
 			}
+			size_t uniquePlaces = places.size();
 
 			// Callers come before the functions they call: the frame of a function
 			// starts behind the frames of all functions that can call it.
@@ -1086,53 +1147,120 @@ namespace
 			}
 			for (size_t i = 0; i < order.size(); i++)
 				frames = max(frames, base[order[i]] + frameSize(functions[order[i]]));
-
-			int available = RAM_LAST - RAM_FIRST + 1;
-			int needed = (int) unique.size() + frames;
-			if (needed > available)
-				throw CompileError(mainFunction->line, "out of RAM: " + decimal(needed) + " bytes needed, " + decimal(available) +
-					" available (" + decimal((int) unique.size()) + " for globals, parameters and static variables, " +
-					decimal(frames) + " for local variables and temporaries)");
-
-			int next = RAM_FIRST;
-			for (size_t i = 0; i < unique.size(); i++)
-				(*addresses)[unique[i]] = next++;
-			int framesStart = next;
+			places.resize(uniquePlaces + frames);
 			for (size_t i = 0; i < order.size(); i++)
 			{
-				FunctionInfo& function = functions[order[i]];
-				int address = framesStart + base[order[i]];
+				const FunctionInfo& function = functions[order[i]];
+				size_t place = uniquePlaces + base[order[i]];
 				for (size_t l = 0; l < function.localLabels.size(); l++)
-					(*addresses)[function.localLabels[l]] = address++;
+					places[place++].push_back(function.localLabels[l]);
 				for (int t = 0; t < function.temporaries; t++)
-					(*addresses)["t_" + function.name + "_" + decimal(t)] = address++;
+					places[place++].push_back("t_" + function.name + "_" + decimal(t));
 			}
+
+			int available = (DIRECT_LAST - DIRECT_FIRST + 1) + (BANKED_LAST - BANKED_FIRST + 1);
+			int needed = (int) places.size();
+			if (needed > available)
+				throw CompileError(mainFunction->line, "out of RAM: " + decimal(needed) + " bytes needed, " + decimal(available) +
+					" available (" + decimal((int) uniquePlaces) + " for globals, parameters and static variables, " +
+					decimal(frames) + " for local variables and temporaries)");
+
+			// the most used places first: they get the direct registers, then the first bank
+			vector<int> addressesInOrder;
+			for (int a = DIRECT_FIRST; a <= DIRECT_LAST; a++)
+				addressesInOrder.push_back(a);
+			for (int a = BANKED_FIRST; a <= BANKED_LAST; a++)
+				addressesInOrder.push_back(a);
+			vector<pair<int, size_t> > byUse;		// -weight, place: sorts the heaviest first, stable
+			for (size_t p = 0; p < places.size(); p++)
+			{
+				int weight = 0;
+				for (size_t l = 0; l < places[p].size(); l++)
+					weight += weights[places[p][l]];
+				byUse.push_back(make_pair(-weight, p));
+			}
+			sort(byUse.begin(), byUse.end());
+			for (size_t rank = 0; rank < byUse.size(); rank++)
+			{
+				const vector<string>& labels = places[byUse[rank].second];
+				for (size_t l = 0; l < labels.size(); l++)
+					(*addresses)[labels[l]] = addressesInOrder[rank];
+			}
+		}
+
+		// The register an instruction names for the RAM address: banked bytes
+		// are 0x10-0x1F of the selected bank.
+		static int registerOf(int address)
+		{
+			return address < BANKED_FIRST ? address : BANKED_FIRST | (address & 0xf);
+		}
+
+		// Replaces "@bank name" by "bank n" where the bank is not selected yet.
+		// After reset FSR selects bank 0. The bank is not known after a label
+		// (the code can be reached from elsewhere) and after a call.
+		static string resolveBanks(const string& text, const map<string, int>& addresses)
+		{
+			istringstream in(text);
+			ostringstream out;
+			string line;
+			string previous;
+			int bank = -1;
+			while (getline(in, line))
+			{
+				size_t first = line.find_first_not_of(' ');
+				string trimmed = first == string::npos ? "" : line.substr(first);
+				if (trimmed.compare(0, 6, "@bank ") == 0)
+				{
+					if (previous.compare(0, 3, "sb ") == 0 || previous.compare(0, 4, "snb ") == 0)
+						throw CompileError(0, "internal error: a bank instruction would sit between a skip and its instruction");
+					int address = addresses.at(trimmed.substr(6));
+					if (address >= BANKED_FIRST && bank != address / 16)
+					{
+						bank = address / 16;
+						out << "        bank " << hexText(bank) << "\n";
+					}
+					continue;
+				}
+				if (!trimmed.empty() && trimmed[trimmed.size() - 1] == ':')
+					bank = trimmed == "_start:" ? 0 : -1;
+				else if (trimmed.compare(0, 5, "call ") == 0)
+				{
+					out << line << "\n";
+					bank = -1;
+					previous = trimmed;
+					continue;
+				}
+				out << line << "\n";
+				previous = trimmed;
+			}
+			return out.str();
 		}
 
 		string assembly(const map<string, int>& addresses)
 		{
 			ostringstream out;
 			for (map<string, int>::const_iterator a = addresses.begin(); a != addresses.end(); ++a)
-				out << a->first << " equ " << hexText(a->second) << "\n";
-			out << "        org fff\n"
+				out << a->first << " equ " << hexText(registerOf(a->second)) << "\n";
+			ostringstream body;
+			body << "        org fff\n"
 				"        jmp _start\n"
 				"        org 0\n"
 				"        autopage on\n"
-				"_start:\n"
-				"        bank 1\n";
-			out << initialization.str();
+				"_start:\n";
+			body << initialization.str();
 			for (size_t i = 0; i < reachable.size(); i++)
-				out << functions[reachable[i]].initialization.str();
-			out << mainFunction->code.str();
-			out << "_exit:\n"
+				body << functions[reachable[i]].initialization.str();
+			body << mainFunction->code.str();
+			body << "_exit:\n"
 				"        jmp _exit\n";
 			for (size_t i = 0; i < definitionOrder.size(); i++)
 			{
 				const FunctionInfo& function = functions[definitionOrder[i]];
 				if (&function == mainFunction || find(reachable.begin(), reachable.end(), function.name) == reachable.end())
 					continue;
-				out << "        firsthalf\n" << function.code.str();
+				body << "        firsthalf\n" << function.code.str();
 			}
+			out << resolveBanks(body.str(), addresses);
 			return out.str();
 		}
 	};

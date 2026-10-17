@@ -27,6 +27,15 @@ bool contains(const std::string& text, const std::string& part) {
 
 const int VALUES[] = { 0, 1, 2, 5, 127, 128, 200, 255 };
 
+// "uint8_t h0; uint8_t h1; ..."
+std::string manyGlobals(int count) {
+    std::string text;
+    for (int i = 0; i < count; i++) {
+        text += "uint8_t h" + number(i) + "; ";
+    }
+    return text;
+}
+
 }
 
 // calls and parameters
@@ -469,7 +478,7 @@ TEST(FunctionsErrorTest, OutOfRamWithParametersAndLocals) {
     std::string message = errorOf(source(
         "uint8_t f(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint8_t e) { uint8_t i1; uint8_t i2; uint8_t i3; uint8_t i4; uint8_t i5; uint8_t i6; return a; }"
         "uint8_t g1; uint8_t g2; uint8_t g3; uint8_t g4; uint8_t g5; uint8_t g6; uint8_t g7; uint8_t g8;"
-        "uint8_t g9; uint8_t g10; uint8_t g11; uint8_t g12; uint8_t g13; uint8_t g14;",
+        + manyGlobals(104),
         "f(1, 2, 3, 4, 5);"));
     EXPECT_TRUE(contains(message, "RAM")) << message;
 }

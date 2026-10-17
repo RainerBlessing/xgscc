@@ -129,7 +129,7 @@ the one before):
    chosen a pass writes `bank n` only where the bank changes (unknown after a
    label, a call or an indirect access). The most used variables (loops count
    more) get the direct registers, then the first bank, and so on.
-   Status: Not Started
+   Status: Complete. The banks 8-15 (FSR bit 7) are not used yet.
 2. **3b Types.** `int8_t`, `uint16_t`, `int16_t`, casts, usual conversions
    (the larger size wins, unsigned wins a tie), 16 bit values in functions
    (result in W and a register for the high byte), signed compares.
@@ -163,7 +163,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3a)
+**Status**: In Progress (3b next)
 
 ## Stage 4: the XGS library and the video kernel
 

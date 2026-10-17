@@ -352,7 +352,7 @@ TEST(CompileErrorTest, MainTwice) {
 
 TEST(CompileErrorTest, OutOfRam) {
     std::string globals;
-    for (int i = 0; i < 23; i++) {
+    for (int i = 0; i < 119; i++) {
         globals += "uint8_t v" + number(i) + ";";
     }
     EXPECT_NE(std::string::npos, errorOf(program(globals, "")).find("RAM"));
@@ -374,7 +374,7 @@ TEST(CompileRunTest, TheCounterExampleCounts) {
     ProgramRun run = runProgram(source.str(), 1000);
     ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
     EXPECT_FALSE(run.halted);
-    // jmp _start, bank, the clear of the global and the clear of "counter = 0",
-    // then inc + jmp per round; the counter wraps at 256
-    EXPECT_EQ(((1000 - 4) / 2) & 0xff, run.value("counter"));
+    // jmp _start, the clear of the global and the clear of "counter = 0", then
+    // inc + jmp per round and the last step is an inc; the counter wraps at 256
+    EXPECT_EQ(((1000 - 3 + 1) / 2) & 0xff, run.value("counter"));
 }

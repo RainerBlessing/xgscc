@@ -70,9 +70,12 @@ void add(uint8_t value)
 There is no data stack. Every variable has a fixed RAM address, chosen when the
 whole program is known:
 
-- The RAM available is `0x0A`-`0x0F` and `0x10`-`0x1F`: 22 bytes. The start code
-  selects bank 1 so that the second half is RAM and not the special registers that
-  bank 0 shows there. More RAM (the other banks) comes with stage 3.
+- The RAM available is the six direct registers `0x0A`-`0x0F` and the banks 1-7
+  (`0x10`-`0x7F`): 118 bytes. A banked byte is reached through the bank that FSR
+  selects. The compiler writes `bank n` only where the bank is not already
+  selected; it is unknown after a label and after a call. The most used variables
+  (uses in loops count eight times more per level) get the direct registers, which
+  need no `bank`, then the first bank, and so on.
 - Globals, static variables and the parameters of a function have an address of
   their own. `const` variables take none.
 - The local variables and the temporaries of an expression (at most four at a time)
@@ -92,8 +95,8 @@ starts at the beginning of a page or in the first half of one (a `call` reaches 
 further) and ends with `retp`, which gives the page back. `page` costs a cycle;
 the video code of stage 4 will be written without it.
 
-The start code (`org fff`, `jmp _start`) selects bank 1, initializes the globals
-and the static variables and falls into the code of `main`. When `main` ends the
+The start code (`org fff`, `jmp _start`) initializes the globals and the static
+variables and falls into the code of `main`. When `main` ends the
 program loops on a `jmp` to itself.
 
 ## Build
