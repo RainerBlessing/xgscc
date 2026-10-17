@@ -426,8 +426,13 @@ namespace
 			{
 				take();
 				if (declaration->type.structId != 0)
-					throw CompileError(peek().line, "initializers of structs are not supported yet");
-				if (declaration->arraySize != 0)
+				{
+					if (declaration->arraySize != 0)
+						structArrayInitializer(*declaration, sizeGiven);
+					else
+						structValue(*declaration);
+				}
+				else if (declaration->arraySize != 0)
 					initializerList(*declaration, sizeGiven);
 				else if (isOperator("{"))
 					throw CompileError(peek().line, "an initializer list is only for arrays");
@@ -441,6 +446,115 @@ namespace
 			if (endsWithSemicolon)
 				expectOperator(";");
 			return declaration;
+		}
+
+		// the values a struct takes in the flat list of initializers: one per member, a
+		// whole array member counts for all its elements
+		int slotsOf(const StructDefinition& definition) const
+		{
+			int slots = 0;
+			for (size_t i = 0; i < definition.members.size(); i++)
+				slots += definition.members[i].count > 0 ? definition.members[i].count : 1;
+			return slots;
+		}
+
+		// { a, b, { c, d }, e } for a struct: the values go in the order of the members into
+		// the flat list; what is missing is zero (an empty pointer in the list)
+		void structValue(Stmt& declaration)
+		{
+			const StructDefinition& definition = structs[declaration.type.structId - 1];
+			if (!isOperator("{"))
+				throw CompileError(peek().line, "a struct needs an initializer list in { }");
+			take();
+			size_t member = 0;
+			while (member < definition.members.size() && !isOperator("}"))
+			{
+				const Member& current = definition.members[member];
+				if (current.count > 0)
+					arrayMemberValue(declaration, current);
+				else
+				{
+					if (isOperator("{"))
+						throw CompileError(peek().line, "too many braces in the initializer of '" + declaration.name + "'");
+					declaration.elements.push_back(expression());
+				}
+				member++;
+				if (!isOperator(","))
+					break;
+				take();
+			}
+			if (!isOperator("}"))
+				throw CompileError(peek().line, "too many initializers for the struct '" + declaration.name + "'");
+			take();
+			for (; member < definition.members.size(); member++)
+			{
+				int slots = definition.members[member].count > 0 ? definition.members[member].count : 1;
+				for (int i = 0; i < slots; i++)
+					declaration.elements.push_back(ExprPtr());
+			}
+		}
+
+		// { a, b } or "text" for an array member
+		void arrayMemberValue(Stmt& declaration, const Member& member)
+		{
+			vector<ExprPtr> values;
+			if (peek().type == Token::STRING && member.type.size == 1 && !member.type.isPointer)
+			{
+				Token text = take();
+				for (size_t i = 0; i < text.text.size(); i++)
+				{
+					values.push_back(ExprPtr(new Expr(Expr::NUMBER, text.line)));
+					values.back()->value = (unsigned char) text.text[i];
+				}
+			}
+			else
+			{
+				if (!isOperator("{"))
+					throw CompileError(peek().line, "the array member '" + member.name + "' needs its values in { }");
+				take();
+				while (!isOperator("}"))
+				{
+					values.push_back(expression());
+					if (!isOperator(","))
+						break;
+					take();
+				}
+				expectOperator("}");
+			}
+			if ((int) values.size() > member.count)
+				throw CompileError(declaration.line, "too many initializers for the array member '" + member.name + "'");
+			while ((int) values.size() < member.count)
+				values.push_back(ExprPtr());
+			for (size_t i = 0; i < values.size(); i++)
+				declaration.elements.push_back(std::move(values[i]));
+		}
+
+		// { { ... }, { ... } } for an array of structs; without a size the list gives it
+		void structArrayInitializer(Stmt& declaration, bool sizeGiven)
+		{
+			const StructDefinition& definition = structs[declaration.type.structId - 1];
+			if (!isOperator("{"))
+				throw CompileError(peek().line, "an array of structs needs an initializer list in { }");
+			take();
+			int count = 0;
+			while (!isOperator("}"))
+			{
+				if (sizeGiven && count == declaration.arraySize)
+					throw CompileError(declaration.line, "too many initializers for the array '" + declaration.name + "'");
+				structValue(declaration);
+				count++;
+				if (!isOperator(","))
+					break;
+				take();
+			}
+			expectOperator("}");
+			if (!sizeGiven)
+				declaration.arraySize = count;
+			for (int i = count; i < declaration.arraySize; i++)
+			{
+				for (int slot = 0; slot < slotsOf(definition); slot++)
+					declaration.elements.push_back(ExprPtr());
+			}
 		}
 
 		// { value, value, ... } of an array; without a size the list gives it

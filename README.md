@@ -91,7 +91,16 @@ void add(uint8_t value)
   and not changed. A table holds at most 256 bytes (128 elements of 16 bits), each
   byte takes one ROM word. A string also initializes a RAM array:
   `uint8_t line[] = "ready";`.
-- **Not yet**: `int`/`long`, `goto`, `struct`. The compiler
+- **Structs**: `struct Sprite { uint8_t x; int8_t dx; uint16_t score; uint8_t name[4]; struct Sprite *next; };`
+  and `typedef struct { ... } Point;`. Members are integers, pointers (also to the
+  struct itself) and arrays of them, they follow each other without gaps. Variables
+  (also `static`, local, arrays `struct Sprite s[8];`) and pointers work: `s.x`,
+  `p->x`, `s[i].x`, `(*p).x`, `&s.x`, `&s[i]`, `p++` steps over a whole struct. Initializer
+  lists give the members in order, nested for array members and arrays of structs:
+  `struct Sprite t[] = { { 1, 2 }, { 3, 4 } };`. A struct is not a value: no
+  assignment of a whole struct, no passing or returning one (use a pointer), no
+  struct inside a struct (use a pointer), no bit fields, no `const` struct.
+- **Not yet**: `int`/`long`, `goto`. The compiler
   says so with the line: `game.c:7: operator '*' is not supported yet`.
 - **Refused on purpose**: recursion (`recursion is not supported: f -> g -> f`) and
   calls nested more than 8 deep, which is the size of the return stack of the
@@ -118,7 +127,10 @@ whole program is known:
   bytes in all, also local ones and static ones; a local array is written again
   from its initializer every time the function runs, otherwise it is not touched).
   A 16 bit variable whose address is taken is placed the same way, so that its two
-  bytes are next to each other.
+  bytes are next to each other. A struct variable is one run too; `s.x` is a variable
+  at its place (direct, as fast as any other), `p->x` and `s[i].x` go through FSR.
+  The element of an array of structs is found with its size: shifts for 1, 2, 4,
+  8 bytes, otherwise the multiplication of the runtime.
 - Reading and writing through a pointer sets FSR and uses INDF. `bank` changes the
   bits of FSR, so while FSR points to data the code touches only the direct
   registers `acc_lo` and `acc_hi` (two of the six, taken only when a program needs

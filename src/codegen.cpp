@@ -68,7 +68,7 @@ namespace
 
 	struct Variable
 	{
-		Variable() : isConst(false), value(0), isArray(false), isTable(false), count(0) {}
+		Variable() : isConst(false), value(0), isArray(false), isTable(false), isStruct(false), count(0) {}
 		Type type;		// of an array: of its elements
 		string lo;		// the names in the assembler source
 		string hi;		// of a 16 bit variable
@@ -76,6 +76,7 @@ namespace
 		long value;
 		bool isArray;		// lo is the physical address of the first element
 		bool isTable;		// a const array: in ROM, read with iread
+		bool isStruct;		// a struct variable: its members are in the side table of members
 		int count;		// elements of an array or table
 	};
 
@@ -88,12 +89,21 @@ namespace
 		vector<int> words;	// one byte per ROM word, a 16 bit element has two
 	};
 
+	// a member of a struct variable: a name that gets the address of the block plus the offset
+	struct MemberPlace
+	{
+		string label;
+		int offset;
+		bool plain;		// an array member is named by its address, the others by their register
+	};
+
 	// RAM that has to be one run of addresses: an array, or a 16 bit variable whose address is taken
 	struct Block
 	{
 		string label;		// an array: its name; a 16 bit variable: its low byte
 		string high;		// a 16 bit variable: its high byte
 		int bytes;
+		vector<MemberPlace> members;	// a struct: where its members are, they are variables too
 	};
 
 	struct ParameterLabels
@@ -249,6 +259,7 @@ namespace
 		string run(const Program& program, map<string, int>* globals, map<string, int>* highBytes)
 		{
 			scopes.push_back(map<string, Variable>());
+			structDefinitions = program.structs;
 			collectFunctions(program);
 			for (size_t i = 0; i < program.globals.size(); i++)
 				declareGlobal(*program.globals[i]);
@@ -284,6 +295,9 @@ namespace
 		vector<Block> globalBlocks;
 		vector<Table> globalTables;
 		set<string> arrayLabels;		// the addresses of arrays are no registers
+		Block pendingBlock;			// the block of the struct variable that was declared last
+		vector<StructDefinition> structDefinitions;
+		map<string, map<string, Variable> > structMembers;		// label of a struct variable -> its members
 		int loopDepth;
 		int temporariesInUse;
 		int nextLabel;
@@ -328,10 +342,6 @@ namespace
 				info.returnsValue = function.returnsValue;
 				info.returnType = function.returnType;
 				info.parameters = function.parameters;
-				if (function.returnsValue)
-					refuseStructs(function.returnType, function.line);
-				for (size_t i = 0; i < function.parameters.size(); i++)
-					refuseStructs(function.parameters[i].type, function.parameters[i].line);
 				info.entry = "f_" + function.name;
 				info.exit = function.name == "main" ? "_exit" : "_ret_" + function.name;
 				return info;
@@ -383,15 +393,8 @@ namespace
 			return label;
 		}
 
-		static void refuseStructs(const Type& type, int line)
-		{
-			if (type.structId != 0 || type.pointeeStruct != 0)
-				throw CompileError(line, "structs are not supported by the code generator yet");
-		}
-
 		Variable declare(const Stmt& declaration)
 		{
-			refuseStructs(declaration.type, declaration.line);
 			map<string, Variable>& scope = scopes.back();
 			if (scope.count(declaration.name))
 				throw CompileError(declaration.line, "'" + declaration.name + "' is declared twice");
@@ -420,6 +423,12 @@ namespace
 				variable.count = declaration.arraySize;
 				variable.lo = newPlainLabel(variableLabel(declaration.name));
 			}
+			else if (declaration.type.structId != 0)
+			{
+				variable.isStruct = true;
+				variable.lo = newPlainLabel(variableLabel(declaration.name));
+				declareMembers(variable, declaration);
+			}
 			else
 			{
 				variable.lo = newLabel(variableLabel(declaration.name));
@@ -428,6 +437,58 @@ namespace
 			}
 			scope[declaration.name] = variable;
 			return variable;
+		}
+
+		const StructDefinition& structOf(int id) const
+		{
+			return structDefinitions[id - 1];
+		}
+
+		// the members of a struct variable are variables of their own, named like
+		// the struct and the member; the block gives them their addresses
+		void declareMembers(const Variable& structVariable, const Stmt& declaration)
+		{
+			const StructDefinition& definition = structOf(structVariable.type.structId);
+			map<string, Variable>& members = structMembers[structVariable.lo];
+			Block block;
+			block.label = structVariable.lo;
+			block.bytes = definition.size;
+			for (size_t i = 0; i < definition.members.size(); i++)
+			{
+				const Member& member = definition.members[i];
+				Variable variable;
+				variable.type = member.type;
+				string name = variableLabel(declaration.name) + "_" + member.name;
+				MemberPlace place;
+				place.offset = member.offset;
+				if (member.count > 0)
+				{
+					variable.isArray = true;
+					variable.count = member.count;
+					variable.lo = newPlainLabel(name);
+					place.label = variable.lo;
+					place.plain = true;
+					block.members.push_back(place);
+				}
+				else
+				{
+					variable.lo = newLabel(name);
+					place.label = variable.lo;
+					place.plain = false;
+					block.members.push_back(place);
+					if (member.type.size == 2)
+					{
+						variable.hi = newLabel(name + "_hi");
+						MemberPlace high;
+						high.label = variable.hi;
+						high.offset = member.offset + 1;
+						high.plain = false;
+						block.members.push_back(high);
+					}
+				}
+				members[member.name] = variable;
+			}
+			pendingBlock = block;
 		}
 
 		// the type a variable has in an expression: an array is the address of its first element
@@ -456,12 +517,39 @@ namespace
 			return variable;
 		}
 
+		// The variable an expression names directly: a variable, or a member of
+		// a struct variable (player.x). Null if it is anything else.
+		const Variable* findVariable(const Expr& expr) const
+		{
+			if (expr.kind == Expr::VARIABLE)
+				return &lookup(expr.name, expr.line);
+			return directMember(expr);
+		}
+
+		const Variable& variableOf(const Expr& expr) const
+		{
+			return *findVariable(expr);
+		}
+
+		// player.x with player a struct variable (not an element of an array, not through a pointer)
+		const Variable* directMember(const Expr& expr) const
+		{
+			if (expr.kind != Expr::MEMBER || expr.arrow || expr.left->kind != Expr::VARIABLE)
+				return NULL;
+			const Variable& base = lookup(expr.left->name, expr.left->line);
+			if (!base.isStruct)
+				return NULL;
+			const map<string, Variable>& members = structMembers.at(base.lo);
+			map<string, Variable>::const_iterator found = members.find(expr.name);
+			if (found == members.end())
+				throw CompileError(expr.line, "the struct " + structOf(base.type.structId).name + " has no member '" + expr.name + "'");
+			return &found->second;
+		}
+
 		bool isPlainVariable(const Expr& expr) const
 		{
-			if (expr.kind != Expr::VARIABLE)
-				return false;
-			const Variable& variable = lookup(expr.name, expr.line);
-			return !variable.isConst && !variable.isArray && !variable.isTable;
+			const Variable* variable = findVariable(expr);
+			return variable != NULL && !variable->isConst && !variable->isArray && !variable->isTable && !variable->isStruct;
 		}
 
 		// the table that base names, if it names one
@@ -497,7 +585,7 @@ namespace
 		// start code that gives a variable with its own address its first value
 		void initialize(ostringstream& out, const Stmt& declaration, const Variable& variable)
 		{
-			if (variable.isArray)
+			if (variable.isArray || variable.isStruct)
 			{
 				writeLines(out, arrayInitialization(declaration, variable));
 				return;
@@ -535,8 +623,12 @@ namespace
 			const Expr* target = &expr;
 			if (expr.kind == Expr::UNARY && expr.name == "&")
 				target = expr.left.get();
-			else if (!(expr.kind == Expr::VARIABLE && lookup(expr.name, expr.line).isArray))
-				return false;
+			else
+			{
+				const Variable* named = findVariable(expr);
+				if (named == NULL || !named->isArray)
+					return false;
+			}
 			long offset = 0;
 			int elementSize = 1;
 			if (target->kind == Expr::INDEX)
@@ -546,20 +638,19 @@ namespace
 				const Variable& array = lookup(target->left->name, target->left->line);
 				if (!array.isArray)
 					return false;
-				elementSize = array.type.size;
+				elementSize = bytesOf(array.type);
 				target = target->left.get();
 			}
-			if (target->kind != Expr::VARIABLE)
+			const Variable* named = findVariable(*target);
+			if (named == NULL || named->isConst)
 				return false;
-			const Variable& variable = lookup(target->name, target->line);
-			if (variable.isConst)
-				return false;
+			const Variable& variable = *named;
 			if (offset != 0)
 			{
 				lines->push_back("mov w, #" + hexText((offset * elementSize) & 0xff));
 				lines->push_back("mov " + accHigh() + ", w");
 			}
-			lines->push_back("mov w, #" + (variable.isArray ? variable.lo : takeAddress(variable)));
+			lines->push_back("mov w, #" + (variable.isArray || variable.isStruct ? variable.lo : takeAddress(variable)));
 			if (offset != 0)
 				lines->push_back("add w, " + accHigh());
 			lines->push_back("mov " + pointer.lo + ", w");
@@ -574,12 +665,48 @@ namespace
 			return variable.lo + "_addr";
 		}
 
+		// the bytes of a struct (or an array of structs) with its initializers, which
+		// are in the flat list in the order of the members
+		vector<int> structBytes(const Stmt& declaration, const Variable& variable)
+		{
+			const StructDefinition& definition = structOf(variable.type.structId);
+			int instances = variable.isStruct ? 1 : variable.count;
+			vector<int> bytes;
+			size_t slot = 0;
+			for (int instance = 0; instance < instances; instance++)
+			{
+				for (size_t m = 0; m < definition.members.size(); m++)
+				{
+					const Member& member = definition.members[m];
+					for (int k = 0; k < (member.count > 0 ? member.count : 1); k++)
+					{
+						long value = 0;
+						if (slot < declaration.elements.size() && declaration.elements[slot])
+						{
+							const Expr& element = *declaration.elements[slot];
+							if (!fold(element, &value))
+								throw CompileError(element.line, "the initializer of '" + declaration.name + "' is not constant");
+							checkFits(value, member.type, element.line);
+							value = wrapTo(value, member.type);
+						}
+						slot++;
+						bytes.push_back((int) (value & 0xff));
+						if (member.type.size == 2)
+							bytes.push_back((int) ((value >> 8) & 0xff));
+					}
+				}
+			}
+			return bytes;
+		}
+
 		// the code that writes the elements of an array: FSR walks along it
 		vector<string> arrayInitialization(const Stmt& declaration, const Variable& variable)
 		{
 			int size = variable.type.size;
 			vector<int> bytes;
-			for (int i = 0; i < variable.count; i++)
+			if (variable.type.structId != 0)
+				bytes = structBytes(declaration, variable);
+			else for (int i = 0; i < variable.count; i++)
 			{
 				long value = 0;
 				if (i < (int) declaration.elements.size())
@@ -628,6 +755,9 @@ namespace
 				if (i < bytes.size())
 					lines.push_back("inc fsr");
 			}
+			// FSR may have walked off the end of the RAM, to 0x80: bit 7 would stay set
+			// ("bank" keeps it) and select the other half of the RAM
+			lines.push_back("clrb fsr.7");
 			lines.push_back("@done");
 			return lines;
 		}
@@ -642,7 +772,7 @@ namespace
 				globalTables.push_back(tableOf(declaration, variable));
 				return;
 			}
-			if (variable.isArray)
+			if (variable.isArray || variable.isStruct)
 			{
 				globalBlocks.push_back(blockOf(variable));
 				globalLabels[declaration.name] = variable.lo;
@@ -690,11 +820,19 @@ namespace
 			return table;
 		}
 
-		static Block blockOf(const Variable& variable)
+		int bytesOf(const Type& type) const
 		{
+			return type.structId != 0 ? structOf(type.structId).size : type.size;
+		}
+
+		// the block of an array, of an array of structs or of a struct variable
+		Block blockOf(const Variable& variable)
+		{
+			if (variable.isStruct)
+				return pendingBlock;
 			Block block;
 			block.label = variable.lo;
-			block.bytes = variable.count * variable.type.size;
+			block.bytes = variable.count * bytesOf(variable.type);
 			return block;
 		}
 
@@ -708,7 +846,7 @@ namespace
 				current->tables.push_back(tableOf(stmt, variable));
 				return;
 			}
-			if (variable.isArray)
+			if (variable.isArray || variable.isStruct)
 			{
 				current->blocks.push_back(blockOf(variable));
 				if (stmt.isStatic)
@@ -824,6 +962,7 @@ namespace
 			case Expr::CALL:
 			case Expr::INDEX:
 			case Expr::INDIRECT:
+			case Expr::MEMBER:
 				return false;
 			case Expr::CAST:
 			{
@@ -921,13 +1060,8 @@ namespace
 
 		Type typeOf(const Expr& expr)
 		{
-			if (expr.kind == Expr::MEMBER)
-				throw CompileError(expr.line, "structs are not supported by the code generator yet");
 			if (expr.kind == Expr::CAST)
-			{
-				refuseStructs(expr.type, expr.line);
 				return expr.type;
-			}
 			long value;
 			if (fold(expr, &value))
 				return constantType(value, expr.line);
@@ -949,6 +1083,11 @@ namespace
 			}
 			case Expr::INDIRECT:
 				return expr.type;
+			case Expr::MEMBER:
+			{
+				MemberRef member = memberOf(expr);
+				return member.member->count > 0 ? pointerTo(member.member->type) : member.member->type;
+			}
 			case Expr::INDEX:
 				if (const Variable* table = tableNamed(*expr.left))
 					return table->type;
@@ -974,6 +1113,50 @@ namespace
 				}
 				return operationType(*expr.left, *expr.right, false);
 			}
+		}
+
+		// the member a MEMBER expression names, in the struct of its left side
+		struct MemberRef
+		{
+			const StructDefinition* definition;
+			const Member* member;
+		};
+
+		MemberRef memberOf(const Expr& expr)
+		{
+			Type baseType = typeOf(*expr.left);
+			int id;
+			if (expr.arrow)
+			{
+				if (!baseType.isPointer || baseType.pointeeStruct == 0)
+					throw CompileError(expr.line, baseType.structId != 0 ? string("use '.' for a struct, '->' is for a pointer to a struct")
+						: "'->' needs a pointer to a struct (this is " + typeName(baseType) + ")");
+				id = baseType.pointeeStruct;
+			}
+			else
+			{
+				if (baseType.isPointer && baseType.pointeeStruct != 0)
+					throw CompileError(expr.line, "use '->' for a pointer to a struct, '.' is for a struct");
+				if (baseType.structId == 0)
+					throw CompileError(expr.line, "'.' needs a struct (this is " + typeName(baseType) + ")");
+				id = baseType.structId;
+			}
+			const StructDefinition& definition = structOf(id);
+			for (size_t i = 0; i < definition.members.size(); i++)
+			{
+				if (definition.members[i].name == expr.name)
+				{
+					MemberRef found = { &definition, &definition.members[i] };
+					return found;
+				}
+			}
+			throw CompileError(expr.line, "the struct " + definition.name + " has no member '" + expr.name + "'");
+		}
+
+		// how many bytes a pointer steps: the size of what it points to
+		int pointeeBytes(const Type& pointer) const
+		{
+			return pointer.pointeeStruct != 0 ? structOf(pointer.pointeeStruct).size : pointer.pointeeSize;
 		}
 
 		static Type pointee(const Type& type, int line, const string& message)
@@ -1018,6 +1201,11 @@ namespace
 				if (tableNamed(*operand.left))
 					throw CompileError(line, "cannot take the address of an element of the ROM table '" + operand.left->name + "'");
 				return pointerTo(typeOf(operand));
+			case Expr::MEMBER:
+			{
+				MemberRef member = memberOf(operand);
+				return pointerTo(member.member->type);
+			}
 			case Expr::UNARY:
 				if (operand.name == "*")
 				{
@@ -1052,6 +1240,8 @@ namespace
 				return commonType(constantType(constantA, a.line), constantType(constantB, b.line));
 			Type typeA = aIsConstant ? U8 : typeOf(a);
 			Type typeB = bIsConstant ? U8 : typeOf(b);
+			if (typeA.structId != 0 || typeB.structId != 0)
+				throw CompileError(a.line, "a struct cannot be used in an operation, use its members");
 			if (typeA.isPointer || typeB.isPointer)
 				return U8;
 			if (aIsConstant)
@@ -1197,10 +1387,13 @@ namespace
 				return;
 			}
 			Type planned = typeOf(expr);
+			if (planned.structId != 0)
+				throw CompileError(expr.line, "a struct cannot be used as a value, use its members");
 			Type produced = expression(expr);
 			if (produced != planned)
 				throw CompileError(expr.line, "internal error: the type of an expression is " + typeName(produced) + ", not " + typeName(planned));
-			if (produced.isPointer && type.isPointer && produced.pointeeSize != type.pointeeSize)
+			if (produced.isPointer && type.isPointer &&
+					(produced.pointeeSize != type.pointeeSize || produced.pointeeStruct != type.pointeeStruct))
 				throw CompileError(expr.line, "pointers to " + typeName(produced.pointee()) + " and " + typeName(type.pointee()) +
 					" are not compatible, use a cast");
 			convert(produced, type, expr.line);
@@ -1209,7 +1402,7 @@ namespace
 		// where a value of the type is without code: a variable of the same size
 		bool isInPlace(const Expr& expr, const Type& type) const
 		{
-			return isPlainVariable(expr) && lookup(expr.name, expr.line).type.size == type.size;
+			return isPlainVariable(expr) && variableOf(expr).type.size == type.size;
 		}
 
 		// A value in registers: a variable of the right size, or the expression in a temporary.
@@ -1218,7 +1411,7 @@ namespace
 			if (isInPlace(expr, type))
 			{
 				Operand operand;
-				const Variable& variable = lookup(expr.name, expr.line);
+				const Variable& variable = variableOf(expr);
 				operand.lo = variable.lo;
 				operand.hi = variable.hi;
 				return operand;
@@ -1266,6 +1459,8 @@ namespace
 				emit("mov w, " + expr.name);
 				loadThrough(expr.type);
 				return expr.type;
+			case Expr::MEMBER:
+				return memberExpression(expr);
 			case Expr::INDEX:
 			{
 				Type element = typeOf(expr);
@@ -1343,16 +1538,27 @@ namespace
 		// address has 8 bits, only the low byte of the index counts.
 		void scaledOffset(const Expr& index, int elementSize, int line)
 		{
-			expressionAs(index, U8);
-			if (elementSize == 2)
+			bool powerOfTwo = (elementSize & (elementSize - 1)) == 0;
+			if (!powerOfTwo)
 			{
-				int t = allocateTemporary(line);
-				emit("mov " + temporary(t) + ", w");
+				// the runtime multiplies; the offset has 8 bits like an address
+				Expr factor(Expr::NUMBER, line);
+				factor.value = elementSize;
+				callRuntime("__mul8u", index, factor, line);
+				return;
+			}
+			expressionAs(index, U8);
+			if (elementSize == 1)
+				return;
+			int t = allocateTemporary(line);
+			emit("mov " + temporary(t) + ", w");
+			for (int size = elementSize; size > 1; size /= 2)
+			{
 				emit("clrb status.0");
 				emit("rl " + temporary(t));
-				emit("mov w, " + temporary(t));
-				freeTemporary();
 			}
+			emit("mov w, " + temporary(t));
+			freeTemporary();
 		}
 
 		// W (and acc_hi) = table[index]: the address of the element is put together
@@ -1402,7 +1608,7 @@ namespace
 				expressionAs(base, baseType);
 				return;
 			}
-			scaledOffset(index, baseType.pointeeSize, line);
+			scaledOffset(index, pointeeBytes(baseType), line);
 			int t = allocateTemporary(line);
 			emit("mov " + temporary(t) + ", w");
 			expressionAs(base, baseType);
@@ -1410,13 +1616,74 @@ namespace
 			freeTemporary();
 		}
 
-		// W = the address of what *p or p[i] names
+		// W = the address of the struct that the left side of a member access names
+		void structAddress(const Expr& base)
+		{
+			if (base.kind == Expr::VARIABLE)
+			{
+				emit("mov w, #" + lookup(base.name, base.line).lo);
+				return;
+			}
+			if (base.kind == Expr::INDEX)
+			{
+				addressOfElement(*base.left, *base.right, base.line);
+				return;
+			}
+			if (base.kind == Expr::UNARY && base.name == "*")
+			{
+				expressionAs(*base.left, typeOf(*base.left));
+				return;
+			}
+			throw CompileError(base.line, "this is no struct that has an address");
+		}
+
+		// W = the address of a member
+		void memberAddress(const Expr& expr)
+		{
+			MemberRef member = memberOf(expr);
+			if (expr.arrow)
+				expressionAs(*expr.left, typeOf(*expr.left));
+			else
+				structAddress(*expr.left);
+			if (member.member->offset == 0)
+				return;
+			int t = allocateTemporary(expr.line);
+			emit("mov " + temporary(t) + ", w");
+			emit("mov w, #" + hexText(member.member->offset));
+			emit("add w, " + temporary(t));
+			freeTemporary();
+		}
+
+		// W = the address of what *p, p[i] or p->member names
 		void lvalueAddress(const Expr& target)
 		{
 			if (target.kind == Expr::INDEX)
 				addressOfElement(*target.left, *target.right, target.line);
+			else if (target.kind == Expr::MEMBER)
+				memberAddress(target);
 			else
 				expressionAs(*target.left, typeOf(*target.left));
+		}
+
+		// W (and acc_hi) = a member, in its own type; an array member is its address
+		Type memberExpression(const Expr& expr)
+		{
+			if (const Variable* direct = directMember(expr))
+			{
+				if (direct->isArray)
+				{
+					emit("mov w, #" + direct->lo);
+					return pointerTo(direct->type);
+				}
+				loadVariable(*direct);
+				return direct->type;
+			}
+			Type type = typeOf(expr);
+			bool isArrayMember = memberOf(expr).member->count > 0;
+			memberAddress(expr);
+			if (!isArrayMember)
+				loadThrough(type);
+			return type;
 		}
 
 		// W = &operand
@@ -1424,10 +1691,12 @@ namespace
 		{
 			Type result = typeOf(expr);
 			const Expr& operand = *expr.left;
-			if (operand.kind == Expr::VARIABLE)
+			if (const Variable* direct = directMember(operand))
+				emit("mov w, #" + (direct->isArray ? direct->lo : takeAddress(*direct)));
+			else if (operand.kind == Expr::VARIABLE)
 			{
 				const Variable& variable = lookup(operand.name, operand.line);
-				emit("mov w, #" + (variable.isArray ? variable.lo : takeAddress(variable)));
+				emit("mov w, #" + (variable.isArray || variable.isStruct ? variable.lo : takeAddress(variable)));
 			}
 			else
 				lvalueAddress(operand);
@@ -1447,12 +1716,12 @@ namespace
 			{
 				expressionAs(pointer, result);
 				emit("mov " + temporary(t) + ", w");
-				scaledOffset(offset, result.pointeeSize, line);
+				scaledOffset(offset, pointeeBytes(result), line);
 				emit("mov w, " + temporary(t) + "-w");
 			}
 			else
 			{
-				scaledOffset(offset, result.pointeeSize, line);
+				scaledOffset(offset, pointeeBytes(result), line);
 				emit("mov " + temporary(t) + ", w");
 				expressionAs(pointer, result);
 				emit("add w, " + temporary(t));
@@ -1468,7 +1737,7 @@ namespace
 			Type type = typeOf(value);
 			if (type.size == 1 && isPlainVariable(value))
 			{
-				emit("mov w, /" + lookup(value.name, value.line).lo);
+				emit("mov w, /" + variableOf(value).lo);
 				return type;
 			}
 			expressionAs(value, type);
@@ -1572,7 +1841,7 @@ namespace
 				else
 				{
 					expressionAs(a, U8);
-					emit(mnemonic(op) + " w, " + lookup(b.name, b.line).lo);
+					emit(mnemonic(op) + " w, " + variableOf(b).lo);
 				}
 				return;
 			}
@@ -1593,7 +1862,7 @@ namespace
 				else if (isPlainVariable(a))
 				{
 					emit("mov w, #" + hexText(k));
-					emit("add w, " + lookup(a.name, a.line).lo);
+					emit("add w, " + variableOf(a).lo);
 				}
 				else
 				{
@@ -1623,8 +1892,8 @@ namespace
 		{
 			string from;
 			bool temporaryUsed = false;
-			if (isPlainVariable(a) && lookup(a.name, a.line).type.size == 1)
-				from = lookup(a.name, a.line).lo;
+			if (isPlainVariable(a) && variableOf(a).type.size == 1)
+				from = variableOf(a).lo;
 			else
 			{
 				expressionAs(a, U8);
@@ -2042,13 +2311,13 @@ namespace
 				localDeclaration(stmt);
 				break;
 			case Stmt::ASSIGNMENT:
-				if (stmt.target)
+				if (stmt.target && !directMember(*stmt.target))
 					assignThrough(stmt);
 				else
 					assignment(stmt);
 				break;
 			case Stmt::STEP:
-				if (stmt.target)
+				if (stmt.target && !directMember(*stmt.target))
 					stepThrough(stmt);
 				else
 					step(stmt);
@@ -2112,40 +2381,82 @@ namespace
 			emit("mov " + label + ", w");
 		}
 
+		// a copy of a variable or of player.x, for the left side of x += y
+		static ExprPtr copyOfTarget(const Expr& expr)
+		{
+			ExprPtr copy(new Expr(expr.kind, expr.line));
+			copy->name = expr.name;
+			copy->arrow = expr.arrow;
+			if (expr.left)
+				copy->left = copyOfTarget(*expr.left);
+			return copy;
+		}
+
+		// the variable a statement changes and a copy of how the statement names it
+		const Variable& targetVariable(const Stmt& stmt, ExprPtr* self)
+		{
+			if (stmt.target)
+			{
+				*self = copyOfTarget(*stmt.target);
+				return *directMember(*stmt.target);
+			}
+			*self = ExprPtr(new Expr(Expr::VARIABLE, stmt.line));
+			(*self)->name = stmt.name;
+			return lookupForWriting(stmt.name, stmt.line);
+		}
+
+		static string nameOfTarget(const Stmt& stmt)
+		{
+			return stmt.target ? stmt.target->name : stmt.name;
+		}
+
 		void assignment(const Stmt& stmt)
 		{
-			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			ExprPtr self;
+			const Variable& variable = targetVariable(stmt, &self);
+			string name = nameOfTarget(stmt);
 			if (variable.isTable)
-				throw CompileError(stmt.line, "the ROM table '" + stmt.name + "' cannot be assigned to");
+				throw CompileError(stmt.line, "the ROM table '" + name + "' cannot be assigned to");
 			if (variable.isArray)
-				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be assigned to");
+				throw CompileError(stmt.line, "the array '" + name + "' cannot be assigned to");
+			if (variable.isStruct)
+				throw CompileError(stmt.line, "the struct '" + name + "' cannot be assigned as a whole, assign its members");
 			if (stmt.op == "=")
 			{
 				storeExpression(variable.lo, variable.hi, variable.type, *stmt.expr);
 				return;
 			}
 			// a op= b is a = a op b
-			Expr self(Expr::VARIABLE, stmt.line);
-			self.name = stmt.name;
 			string op = stmt.op.substr(0, stmt.op.size() - 1);
-			Type type = arithmetic(op, self, *stmt.expr, stmt.line);
+			Type type = arithmetic(op, *self, *stmt.expr, stmt.line);
 			convert(type, variable.type, stmt.line);
 			storeAccumulator(variable.lo, variable.hi, variable.type);
 		}
 
 		void step(const Stmt& stmt)
 		{
-			const Variable& variable = lookupForWriting(stmt.name, stmt.line);
+			ExprPtr self;
+			const Variable& variable = targetVariable(stmt, &self);
+			string name = nameOfTarget(stmt);
 			if (variable.isTable)
-				throw CompileError(stmt.line, "the ROM table '" + stmt.name + "' cannot be changed");
-			if (variable.isArray)
-				throw CompileError(stmt.line, "the array '" + stmt.name + "' cannot be changed");
+				throw CompileError(stmt.line, "the ROM table '" + name + "' cannot be changed");
+			if (variable.isArray || variable.isStruct)
+				throw CompileError(stmt.line, "'" + name + "' cannot be changed as a whole");
 			bool increment = stmt.op == "++";
 			if (variable.type.size == 1)
 			{
-				int times = variable.type.isPointer ? variable.type.pointeeSize : 1;
-				for (int i = 0; i < times; i++)
-					emit(string(increment ? "inc " : "dec ") + variable.lo);
+				// a pointer moves by the size of what it points to
+				int bytes = variable.type.isPointer ? pointeeBytes(variable.type) : 1;
+				if (bytes <= 2)
+				{
+					for (int i = 0; i < bytes; i++)
+						emit(string(increment ? "inc " : "dec ") + variable.lo);
+				}
+				else
+				{
+					emit("mov w, #" + hexText(bytes));
+					emit(string(increment ? "add " : "sub ") + variable.lo + ", w");
+				}
 				return;
 			}
 			if (increment)
@@ -2173,6 +2484,8 @@ namespace
 		void assignThrough(const Stmt& stmt)
 		{
 			refuseTableTarget(*stmt.target);
+			if (stmt.target->kind == Expr::MEMBER && memberOf(*stmt.target).member->count > 0)
+				throw CompileError(stmt.line, "the array member '" + stmt.target->name + "' cannot be assigned to");
 			Type element = typeOf(*stmt.target);
 			string op = stmt.op.substr(0, stmt.op.size() - 1);
 			changeThrough(*stmt.target, element, op, *stmt.expr, stmt.line);
@@ -2607,6 +2920,13 @@ namespace
 					(*addresses)[blocks[i].high] = cursor + 1;
 				if (blocks[i].high.empty())
 					arrayLabels.insert(blocks[i].label);
+				for (size_t m = 0; m < blocks[i].members.size(); m++)
+				{
+					const MemberPlace& place = blocks[i].members[m];
+					(*addresses)[place.label] = cursor + place.offset;
+					if (place.plain)
+						arrayLabels.insert(place.label);
+				}
 			}
 
 			// the most used places first: they get the direct registers, then the first bank

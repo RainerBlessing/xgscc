@@ -153,8 +153,11 @@ the one before):
    the product is the same for signed and unsigned values, division and remainder
    have signed versions. Faster hand written versions are a task for stage 5.
    Status: Complete
-6. **3f `switch` and `struct`.**
-   Status: Not Started
+6. **3f `switch` and `struct`.** `switch` is a comparison chain over a hidden
+   variable; a struct is one run of RAM whose members are variables at fixed
+   places (direct access) or reached through FSR. No struct values (assignment,
+   parameters), no nesting by value, no bit fields.
+   Status: Complete
 7. **3g `--map`**: where every variable, function and table is, how much RAM
    and ROM is used.
    Status: Not Started
@@ -170,7 +173,7 @@ the one before):
 - Pointer to a variable in each bank, array indexed by a variable, ROM table lookup
   at the page boundaries.
 - Out of RAM and out of ROM give a message with the numbers.
-**Status**: In Progress (3f next)
+**Status**: In Progress (3g next)
 
 ## Stage 4: the XGS library and the video kernel
 
