@@ -299,7 +299,7 @@ TEST(StructsTest, StructsAndArraysShareTheRam) {
 }
 
 TEST(StructsTest, TooBigForTheRam) {
-    std::string message = errorOf(source("struct S { uint8_t a[50]; }; struct S s[3];", ""));
+    std::string message = errorOf(source("struct S { uint8_t a[50]; }; struct S s[6];", ""));
     EXPECT_TRUE(contains(message, "RAM")) << message;
 }
 

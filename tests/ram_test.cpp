@@ -183,3 +183,103 @@ TEST(RamTest, BankIsSetAgainAfterALabelAndAfterACall) {
     EXPECT_EQ(7, run.value("g30"));
     EXPECT_EQ(8, run.value("g12"));
 }
+
+// the upper half of the RAM (0x80-0xFF) holds arrays
+
+TEST(RamTest, ArraysLiveInTheUpperHalfOfTheRam) {
+    ProgramRun run = runProgram(source("uint8_t big[100]; uint8_t x = 3;", "big[0] = x; big[99] = x + 1;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_GE(run.compiled.variables.at("big"), 0x80);
+    EXPECT_EQ(3, run.ram[run.compiled.variables.at("big")]);
+    EXPECT_EQ(4, run.ram[run.compiled.variables.at("big") + 99]);
+}
+
+TEST(RamTest, ArraysUseAllOfTheUpperHalfButTheLastByte) {
+    ProgramRun run = runProgram(source("uint8_t a[127];", "a[0] = 1; a[126] = 2; for (uint8_t i = 1; i < 126; i++) a[i] = i;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(0x80, run.compiled.variables.at("a"));
+    EXPECT_EQ(1, run.ram[0x80]);
+    EXPECT_EQ(2, run.ram[0xfe]);
+    EXPECT_EQ(64, run.ram[0x80 + 64]);
+    EXPECT_EQ(0, run.ram[0xff]);
+}
+
+TEST(RamTest, TheAddressBehindTheEndOfAnArrayFitsIntoAPointer) {
+    ProgramRun run = runProgram(source("uint8_t a[5]; uint8_t *p; uint8_t n;", "for (p = a; p < a + 5; p++) { *p = 1; n++; }"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(5, run.value("n"));
+    EXPECT_LE(run.compiled.variables.at("a") + 5, 0xff);
+}
+
+TEST(RamTest, ArraysBeyondTheUpperHalfContinueBelow) {
+    // 200 bytes: the array reaches from the top of the RAM down into the lower half
+    ProgramRun run = runProgram(source("uint8_t a[200]; uint8_t b[10];", "a[199] = 7; a[0] = 8; b[9] = 9; a[127] = 5; a[128] = 6;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(7, run.ram[run.compiled.variables.at("a") + 199]);
+    EXPECT_EQ(8, run.ram[run.compiled.variables.at("a")]);
+    EXPECT_EQ(9, run.ram[run.compiled.variables.at("b") + 9]);
+    EXPECT_EQ(5, run.ram[run.compiled.variables.at("a") + 127]);
+    EXPECT_EQ(6, run.ram[run.compiled.variables.at("a") + 128]);
+}
+
+TEST(RamTest, ScalarsKeepWorkingNextToArraysInTheUpperHalf) {
+    // after a pointer in the upper half FSR has bit 7 set: the banks of the variables must not be confused
+    std::string globals;
+    for (int i = 0; i < 30; i++) {
+        globals += "uint8_t g" + number(i) + " = " + number(i + 1) + ";\n";
+    }
+    ProgramRun run = runProgram(source(globals + "uint8_t a[100]; uint8_t sum;",
+        "for (uint8_t i = 0; i < 100; i++) { a[i] = i + g20; sum += a[i]; g25 += g1; g10 = g15 + a[i]; }"), 3000000);
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    int sum = 0;
+    for (int i = 0; i < 100; i++) {
+        sum += i + 21;
+    }
+    EXPECT_EQ(sum & 0xff, run.value("sum"));
+    EXPECT_EQ((26 + 100 * 2) & 0xff, run.value("g25"));
+    EXPECT_EQ((16 + 99 + 21) & 0xff, run.value("g10"));
+    EXPECT_EQ(120, run.ram[run.compiled.variables.at("a") + 99]);
+}
+
+TEST(RamTest, WordsAndStructsInTheUpperHalf) {
+    ProgramRun run = runProgram(source("struct S { uint8_t x; uint16_t y; }; struct S s[20]; uint16_t w[30]; uint16_t total;",
+        "for (uint8_t i = 0; i < 20; i++) { s[i].x = i; s[i].y = (uint16_t)i * 100; } for (uint8_t i = 0; i < 30; i++) w[i] = i + 1000;"
+        "total = s[19].y + w[29];"), 3000000);
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(1900 + 1029, run.value16("total"));
+}
+
+TEST(RamTest, StructVariablesWithDirectMembersStayInTheLowerHalf) {
+    ProgramRun run = runProgram(source("struct P { uint8_t x; uint16_t w; }; struct P p; uint8_t big[100];", "p.x = 3; p.w = 500; big[5] = p.x;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_LT(run.compiled.variables.at("p"), 0x80);
+    EXPECT_GE(run.compiled.variables.at("big"), 0x80);
+    EXPECT_EQ(3, run.ram[run.compiled.variables.at("big") + 5]);
+}
+
+TEST(RamTest, ScalarsAndArraysTogetherUseTheWholeRam) {
+    // 118 bytes of variables, 128 bytes of array
+    ProgramRun run = runProgram(source(globalsWithValues(110) + "uint8_t big[127];", "big[126] = g109;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(3 + 109, run.ram[0xfe]);
+}
+
+TEST(RamTest, TooMuchForTheLowerHalfIsReportedWithNumbers) {
+    CompileResult result = compile(source(globalsWithValues(119) + "uint8_t big[100];", ""), "test.c");
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(std::string::npos, result.error.find("118")) << result.error;
+    EXPECT_NE(std::string::npos, result.error.find("lower RAM")) << result.error;
+}
+
+TEST(RamTest, AnArrayThatIsLargerThanAllOfTheRam) {
+    CompileResult result = compile(source("uint8_t big[250];", ""), "test.c");
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(std::string::npos, result.error.find("RAM")) << result.error;
+}
+
+TEST(RamTest, NoClearOfFsrBitSevenWithoutTheUpperHalf) {
+    ProgramRun run = runProgram(source("uint8_t a[20]; uint8_t x;", "a[3] = 1; x = a[3];"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(std::string::npos, run.compiled.assembly.find("clrb fsr.7\n        @")) ;
+    EXPECT_EQ(1, run.value("x"));
+}

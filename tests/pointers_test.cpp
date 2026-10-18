@@ -384,13 +384,13 @@ TEST(PointersTest, ArraysDoNotOverlapEachOther) {
 }
 
 TEST(PointersTest, TooMuchRamForArrays) {
-    std::string message = errorOf(source("uint8_t big[113];", ""));
+    std::string message = errorOf(source("uint8_t big[250];", ""));
     EXPECT_TRUE(contains(message, "RAM")) << message;
 }
 
 TEST(PointersTest, ArraysPlusVariablesTooMuch) {
-    std::string globals = "uint8_t big[100];";
-    for (int i = 0; i < 19; i++) {
+    std::string globals = "uint8_t big[240];";
+    for (int i = 0; i < 20; i++) {
         globals += "uint8_t v" + number(i) + ";";
     }
     std::string message = errorOf(source(globals, ""));

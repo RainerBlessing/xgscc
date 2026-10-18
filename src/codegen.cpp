@@ -58,6 +58,8 @@ namespace
 	const int DIRECT_LAST = 0x0f;
 	const int BANKED_FIRST = 0x10;			// banks 1-7
 	const int BANKED_LAST = 0x7f;
+	const int UPPER_FIRST = 0x80;			// banks 8-15, FSR bit 7: only arrays live there
+	const int UPPER_LAST = 0xff;			// the end: the byte at 0xFF stays free (see allocate)
 	const char* const ACC_HIGH = "acc_hi";		// the high byte of a 16 bit result
 	const char* const ACC_LOW = "acc_lo";		// holds a value while FSR points somewhere
 
@@ -253,7 +255,7 @@ namespace
 	class Generator
 	{
 	public:
-		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), loopDepth(0), temporariesInUse(0), nextLabel(0), callDepth(0)
+		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), usesUpperRam(false), loopDepth(0), temporariesInUse(0), nextLabel(0), callDepth(0)
 		{
 			allocatable.insert(ACC_HIGH);
 			allocatable.insert(ACC_LOW);
@@ -304,6 +306,7 @@ namespace
 		vector<Table> globalTables;
 		set<string> arrayLabels;		// the addresses of arrays are no registers
 		set<string> pinned;			// labels that have to be direct registers
+		bool usesUpperRam;			// something sits in banks 8-15, so FSR bit 7 gets set
 		Block pendingBlock;			// the block of the struct variable that was declared last
 		vector<StructDefinition> structDefinitions;
 		map<string, map<string, Variable> > structMembers;		// label of a struct variable -> its members
@@ -1466,6 +1469,9 @@ namespace
 		{
 			if (expr.kind == Expr::CAST)
 			{
+				long address;
+				if (expr.type.isPointer && fold(*expr.left, &address) && (address & 0xff) >= UPPER_FIRST)
+					usesUpperRam = true;
 				Type from = expression(*expr.left);
 				convert(from, expr.type, expr.line);
 				return expr.type;
@@ -2998,22 +3004,51 @@ namespace
 			places = kept;
 
 			allocatedBlocks = blocks;
-			int blockBytes = 0;
-			for (size_t i = 0; i < blocks.size(); i++)
-				blockBytes += blocks[i].bytes;
-			int available = (DIRECT_LAST - DIRECT_FIRST + 1) + (BANKED_LAST - BANKED_FIRST + 1);
-			int needed = (int) places.size() + blockBytes;
-			if (needed > available || blockBytes > BANKED_LAST - BANKED_FIRST + 1)
-				throw CompileError(mainFunction->line, "out of RAM: " + decimal(needed) + " bytes needed, " + decimal(available) +
-					" available (" + decimal((long) places.size()) + " for variables, parameters and temporaries, " +
-					decimal(blockBytes) + " for arrays; arrays have to fit in the banks, which hold " +
-					decimal(BANKED_LAST - BANKED_FIRST + 1) + ")");
 
-			// the blocks sit at the end of the banks, one run each
-			int cursor = BANKED_LAST + 1;
+			// Arrays are stacked from the top of the RAM downwards, as far as they need. The
+			// last byte (0xFF) stays free: the address behind the end of an array has to
+			// fit into the 8 bits of a pointer, or "p < a + n" would never be true. Below
+			// them, but not above 0x7F, are the struct variables and the 16 bit variables
+			// whose address is taken: they are also reached with direct instructions,
+			// which only see the banks 1-7. The variables fill what is left from below.
+			int arrayCursor = UPPER_LAST;
+			vector<int> blockBase(blocks.size(), 0);
+			int arrayBytes = 0;
 			for (size_t i = 0; i < blocks.size(); i++)
 			{
-				cursor -= blocks[i].bytes;
+				if (!blocks[i].members.empty() || !blocks[i].high.empty())
+					continue;
+				arrayCursor -= blocks[i].bytes;
+				blockBase[i] = arrayCursor;
+				arrayBytes += blocks[i].bytes;
+			}
+			int lowerCursor = min(BANKED_LAST + 1, arrayCursor);
+			int structBytes = 0;
+			for (size_t i = 0; i < blocks.size(); i++)
+			{
+				if (blocks[i].members.empty() && blocks[i].high.empty())
+					continue;
+				lowerCursor -= blocks[i].bytes;
+				blockBase[i] = lowerCursor;
+				structBytes += blocks[i].bytes;
+			}
+			int lowerAvailable = (DIRECT_LAST - DIRECT_FIRST + 1) + (BANKED_LAST - BANKED_FIRST + 1);
+			int lowerBlocks = max(0, BANKED_LAST + 1 - lowerCursor);
+			int lowerNeeded = (int) places.size() + lowerBlocks;
+			if (lowerCursor < BANKED_FIRST || lowerNeeded > lowerAvailable)
+			{
+				throw CompileError(mainFunction->line, "out of RAM: " + decimal(lowerNeeded) + " bytes needed in the lower RAM, " +
+					decimal(lowerAvailable) + " available (" + decimal((long) places.size()) + " for variables, parameters and temporaries, " +
+					decimal(structBytes) + " for structs, " + decimal(arrayBytes) + " for arrays, which fill the RAM from the top: " +
+					decimal(UPPER_LAST - UPPER_FIRST) + " bytes of the upper RAM and then the lower RAM)");
+			}
+
+			// the blocks sit at the end of their half, one run each
+			for (size_t i = 0; i < blocks.size(); i++)
+			{
+				int cursor = blockBase[i];
+				if (cursor >= UPPER_FIRST)
+					usesUpperRam = true;
 				(*addresses)[blocks[i].label] = cursor;
 				if (!blocks[i].high.empty())
 					(*addresses)[blocks[i].high] = cursor + 1;
@@ -3078,7 +3113,7 @@ namespace
 		// (the code can be reached from elsewhere) and after a call. A "bank"
 		// between a skip and the instruction it skips is skipped with it; the
 		// bank is unknown after that.
-		static string resolveBanks(const string& text, const map<string, int>& addresses)
+		static string resolveBanks(const string& text, const map<string, int>& addresses, bool usesUpperRam)
 		{
 			istringstream in(text);
 			ostringstream out;
@@ -3095,6 +3130,10 @@ namespace
 				{
 					indirect = trimmed == "@indirect";
 					bank = -1;		// FSR is a pointer now or was one
+					// A pointer into banks 8-15 has set bit 7 of FSR, which "bank" does not
+					// clear: the variables are in banks 1-7 and need it 0.
+					if (!indirect && usesUpperRam)
+						out << "        clrb fsr.7\n";
 					continue;
 				}
 				if (trimmed.compare(0, 6, "@bank ") == 0)
@@ -3269,7 +3308,7 @@ namespace
 					continue;
 				body << "        firsthalf\n" << function.code.str();
 			}
-			out << resolveBanks(body.str(), addresses);
+			out << resolveBanks(body.str(), addresses, usesUpperRam);
 			out << tableData.str();
 			return out.str();
 		}

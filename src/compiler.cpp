@@ -27,7 +27,7 @@ static void buildMap(const CodeInfo& info, const map<string, int>& labels, Compi
 {
 	MemoryMap& map = result.map;
 	map.ram = info.ram;
-	map.ramAvailable = 118;
+	map.ramAvailable = 246;
 	map.callDepth = info.callDepth;
 
 	vector<pair<int, const CodeSymbol*> > code;

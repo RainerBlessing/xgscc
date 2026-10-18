@@ -104,11 +104,11 @@ TEST(MapTest, RamEntriesDoNotOverlapAndAddUpToTheRam) {
     for (const RamEntry& entry : result.map.ram) {
         for (int a = entry.address; a < entry.address + entry.bytes; a++) {
             EXPECT_TRUE(used.insert(a).second) << "address " << a << " twice: " << entry.name;
-            EXPECT_TRUE((a >= 0x0a && a <= 0x0f) || (a >= 0x10 && a <= 0x7f)) << a;
+            EXPECT_TRUE((a >= 0x0a && a <= 0x0f) || (a >= 0x10 && a <= 0xff)) << a;
         }
         bytes += entry.bytes;
     }
-    EXPECT_EQ(118, result.map.ramAvailable);
+    EXPECT_EQ(246, result.map.ramAvailable);
     EXPECT_LE(bytes, result.map.ramAvailable);
     EXPECT_EQ(static_cast<int>(used.size()), bytes);
 }
@@ -255,7 +255,7 @@ TEST(MapTextTest, SaysHowMuchIsLeft) {
     for (const RamEntry& entry : result.map.ram) {
         used += entry.bytes;
     }
-    EXPECT_TRUE(contains(text, number(used) + " of 118 bytes")) << text;
-    EXPECT_TRUE(contains(text, number(118 - used) + " free")) << text;
+    EXPECT_TRUE(contains(text, number(used) + " of 246 bytes")) << text;
+    EXPECT_TRUE(contains(text, number(246 - used) + " free")) << text;
     EXPECT_TRUE(contains(text, "of 4096 words")) << text;
 }

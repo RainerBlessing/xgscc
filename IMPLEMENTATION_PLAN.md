@@ -129,7 +129,7 @@ the one before):
    chosen a pass writes `bank n` only where the bank changes (unknown after a
    label, a call or an indirect access). The most used variables (loops count
    more) get the direct registers, then the first bank, and so on.
-   Status: Complete. The banks 8-15 (FSR bit 7) are not used yet.
+   Status: Complete. The banks 8-15 (FSR bit 7) hold arrays since stage 4c.
 2. **3b Types.** `int8_t`, `uint16_t`, `int16_t`, casts, usual conversions
    (the larger size wins, unsigned wins a tie), 16 bit values in functions
    (result in W and a register for the high byte), signed compares.

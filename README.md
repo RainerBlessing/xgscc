@@ -112,26 +112,33 @@ void add(uint8_t value)
 There is no data stack. Every variable has a fixed RAM address, chosen when the
 whole program is known:
 
-- The RAM available is the six direct registers `0x0A`-`0x0F` and the banks 1-7
-  (`0x10`-`0x7F`): 118 bytes. A banked byte is reached through the bank that FSR
-  selects. The compiler writes `bank n` only where the bank is not already
-  selected; it is unknown after a label and after a call. The most used variables
-  (uses in loops count eight times more per level) get the direct registers, which
-  need no `bank`, then the first bank, and so on.
+- The RAM has 246 bytes: the six direct registers `0x0A`-`0x0F`, the banks 1-7
+  (`0x10`-`0x7F`) and the banks 8-15 (`0x80`-`0xFF`, FSR bit 7; the example programs
+  of the XGS ME use them, too). The variables, parameters and temporaries (118 bytes) live
+  in the lower part, because a bank is selected with `bank n`, which does not touch bit
+  7 of FSR. A banked byte is reached through the bank that FSR selects; the compiler
+  writes `bank n` only where the bank is not already selected (unknown after a label
+  and after a call). The most used variables (uses in loops count eight times more per
+  level) get the direct registers, which need no `bank`, then the first bank, and so on.
+- **Arrays** are only reached through FSR and fill the RAM from the top: first the
+  upper half (127 bytes, the last byte stays free so that the address behind the end of
+  an array fits into a pointer), then on into the lower half. A pointer into the upper
+  half sets bit 7 of FSR, so after every access through FSR the code clears it, in
+  programs that use the upper half (one cycle).
 - Globals, static variables and the parameters of a function have an address of
   their own. `const` variables take none.
 - The local variables and the temporaries of an expression form the frame of a
   function. Functions that cannot be active at the same time (neither calls the
   other, directly or through others) share their frames; so a function that calls
   another one keeps its locals.
-- Arrays have a run of addresses of their own at the end of the banks (up to 112
-  bytes in all, also local ones and static ones; a local array is written again
-  from its initializer every time the function runs, otherwise it is not touched).
-  A 16 bit variable whose address is taken is placed the same way, so that its two
-  bytes are next to each other. A struct variable is one run too; `s.x` is a variable
-  at its place (direct, as fast as any other), `p->x` and `s[i].x` go through FSR.
-  The element of an array of structs is found with its size: shifts for 1, 2, 4,
-  8 bytes, otherwise the multiplication of the runtime.
+- Arrays have a run of addresses of their own (also local ones and static ones; a local
+  array is written again from its initializer every time the function runs, otherwise it
+  is not touched). A 16 bit variable whose address is taken is placed the same way, so
+  that its two bytes are next to each other, but in the lower half. A struct variable is
+  one run too, also in the lower half; `s.x` is a variable at its place (direct, as fast
+  as any other), `p->x` and `s[i].x` go through FSR. The element of an array of structs is
+  found with its size: shifts for 1, 2, 4, 8 bytes, otherwise the multiplication of the
+  runtime.
 - Reading and writing through a pointer sets FSR and uses INDF. `bank` changes the
   bits of FSR, so while FSR points to data the code touches only the direct
   registers `acc_lo` and `acc_hi` (two of the six, taken only when a program needs
