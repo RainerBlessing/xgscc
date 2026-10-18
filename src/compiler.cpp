@@ -7,6 +7,7 @@
 #include "errors.h"
 #include "lexer.h"
 #include "library.h"
+#include "optimizer.h"
 #include "parser.h"
 #include "runtime.h"
 
@@ -75,7 +76,7 @@ static void buildMap(const CodeInfo& info, const map<string, int>& labels, Compi
 	sort(map.rom.begin(), map.rom.end(), lessAddress);
 }
 
-CompileResult compile(const string& source, const string& fileName)
+CompileResult compile(const string& source, const string& fileName, int optimizeLevel)
 {
 	CompileResult result;
 	result.ok = false;
@@ -119,6 +120,8 @@ CompileResult compile(const string& source, const string& fileName)
 			program.functions.push_back(std::move(runtime.functions[i]));
 		CodeInfo info;
 		result.assembly = generateAssembly(program, &info);
+		if (optimizeLevel >= 1)
+			result.assembly = optimize(result.assembly);
 		result.variables = info.variables;
 		result.highBytes = info.highBytes;
 

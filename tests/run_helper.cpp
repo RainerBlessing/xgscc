@@ -1,5 +1,6 @@
 #include "run_helper.h"
 #include <string.h>
+#include <gtest/gtest.h>
 #include "cpu.h"
 
 int ProgramRun::value(const std::string& name) const
@@ -18,14 +19,15 @@ int ProgramRun::value16(const std::string& name) const
 	return value(name) | ram[high->second] << 8;
 }
 
-ProgramRun runProgram(const std::string& source, long maxSteps)
+// one run at the given optimization level
+static ProgramRun runAt(const std::string& source, long maxSteps, int level)
 {
 	ProgramRun run;
 	run.halted = false;
 	run.steps = 0;
 	memset(run.ram, 0, sizeof(run.ram));
 	run.mode = 0;
-	run.compiled = compile(source, "test.c");
+	run.compiled = compile(source, "test.c", level);
 	if (!run.compiled.ok)
 		return run;
 
@@ -46,4 +48,26 @@ ProgramRun runProgram(const std::string& source, long maxSteps)
 	memcpy(run.ram, cpu.getRAM(), sizeof(run.ram));
 	run.mode = *cpu.getMode();
 	return run;
+}
+
+// Every program runs without and with the optimizer: the RAM has to be the same.
+ProgramRun runProgram(const std::string& source, long maxSteps)
+{
+	ProgramRun optimized = runAt(source, maxSteps, 1);
+	if (!optimized.compiled.ok || !optimized.halted)
+		return optimized;
+	ProgramRun plain = runAt(source, maxSteps * 2, 0);
+	if (!plain.compiled.ok || !plain.halted)
+	{
+		ADD_FAILURE() << "the program does not end without the optimizer, or does not compile";
+		return optimized;
+	}
+	for (int address = 0x0a; address < 256; address++)
+	{
+		if (plain.ram[address] != optimized.ram[address])
+			ADD_FAILURE() << "RAM " << address << " differs: " << (int) plain.ram[address] << " at -O0, " << (int) optimized.ram[address] << " at -O1";
+	}
+	if (plain.steps < optimized.steps)
+		ADD_FAILURE() << "the optimized program takes more steps";
+	return optimized;
 }

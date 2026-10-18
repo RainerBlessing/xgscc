@@ -23,6 +23,7 @@ add_library(xgscc_lib STATIC
     src/kernel.cpp
     src/library.cpp
     src/memorymap.cpp
+    src/optimizer.cpp
 )
 target_include_directories(xgscc_lib PUBLIC src)
 target_link_libraries(xgscc_lib sxcpu)

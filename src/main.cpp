@@ -1,4 +1,4 @@
-// xgscc [-S] [--map] input.c -o output: compiles C for the XGameStation Micro Edition.
+// xgscc [-S] [--map] [-O0|-O1] input.c -o output: compiles C for the XGameStation Micro Edition.
 // output is a hex file, with -S the assembler source. --map writes where everything
 // is into a file next to the output (game.hex -> game.map).
 #include <fstream>
@@ -13,7 +13,7 @@ static const int ROM_WORDS = 4096;
 
 static int usage()
 {
-	std::cerr << "usage: xgscc [-S] [--map] input.c -o output\n";
+	std::cerr << "usage: xgscc [-S] [--map] [-O0|-O1] input.c -o output\n";
 	return 2;
 }
 
@@ -31,12 +31,17 @@ int main(int argc, char** argv)
 {
 	bool assemblyOnly = false;
 	bool writeMap = false;
+	int optimize = 1;
 	const char* input = NULL;
 	const char* output = NULL;
 	for (int i = 1; i < argc; i++)
 	{
 		if (strcmp(argv[i], "-S") == 0)
 			assemblyOnly = true;
+		else if (strcmp(argv[i], "-O0") == 0)
+			optimize = 0;
+		else if (strcmp(argv[i], "-O1") == 0)
+			optimize = 1;
 		else if (strcmp(argv[i], "--map") == 0)
 			writeMap = true;
 		else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc)
@@ -58,7 +63,7 @@ int main(int argc, char** argv)
 	std::stringstream source;
 	source << file.rdbuf();
 
-	CompileResult result = compile(source.str(), input);
+	CompileResult result = compile(source.str(), input, optimize);
 	if (!result.ok)
 	{
 		std::cerr << result.error << "\n";

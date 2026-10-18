@@ -270,7 +270,18 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
 **Tests**:
 - Every earlier run test runs at `-O0` and `-O1` and gives the same RAM.
 - Each peephole rule has a test with the assembler before and after.
-**Status**: Not Started
+**Steps**:
+1. **5a** peephole optimizer (`src/optimizer.cpp`, `-O0`/`-O1`, default `-O1`): `or w, #0`
+   after `mov w, reg`, unused labels, jump to next, jump threading, dead code, double
+   `bank`, and bank tracking over the control flow (calls, labels, FSR writes). Every run
+   test runs at both levels and compares the RAM. Result: pong's C code 695 -> 669 words
+   (-3.7 %), far from the 20 % of the success criterion; see below.
+   Status: Complete
+2. **5b** a real preprocessor. Status: Not Started
+3. **5c** `.obj` output and a listing with C line numbers. Status: Not Started
+4. **5d** README review and the size goal: what else makes code smaller (bank-aware
+   allocation, page words, calling convention). Status: Not Started
+**Status**: In Progress (5b next)
 
 ## Open questions
 

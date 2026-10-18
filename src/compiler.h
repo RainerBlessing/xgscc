@@ -16,7 +16,10 @@ struct CompileResult
 	MemoryMap map;			// where everything is
 };
 
-/** Compiles a C source into SX52 assembler. fileName is only used in messages. */
-CompileResult compile(const std::string& source, const std::string& fileName);
+/**
+ * Compiles a C source into SX52 assembler. fileName is only used in messages.
+ * optimize 0 is the code as the code generator writes it, 1 runs the peephole optimizer.
+ */
+CompileResult compile(const std::string& source, const std::string& fileName, int optimize = 1);
 
 #endif /*COMPILER_H_*/
