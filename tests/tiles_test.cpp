@@ -2,6 +2,8 @@
 // table in the ROM, one colour per tile and line of the tile. Run on the emulated SX52
 // with the writes to RE recorded.
 #include <gtest/gtest.h>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "compiler.h"
@@ -348,4 +350,34 @@ TEST(TilesErrorTest, TheNumbersHaveToBeNumbers) {
     CompileResult result = compile("#define XGS_COLUMNS lots\n#include <xgs.h>\nvoid main(void) { xgs_init(); }", "tiles.c");
     ASSERT_FALSE(result.ok);
     EXPECT_TRUE(contains(result.error, "XGS_COLUMNS")) << result.error;
+}
+
+// the examples that draw tiles fill the screen: about 240 lines, 17 columns
+
+namespace {
+std::string readExample(const char* name) {
+    std::ifstream file(std::string(EXAMPLES_DIR "/") + name);
+    std::stringstream text;
+    text << file.rdbuf();
+    return text.str();
+}
+
+// the number of picture lines in the third frame
+int pictureLines(const std::string& source) {
+    Result r = runProgram(source, 6);
+    EXPECT_TRUE(r.compiled.ok) << r.compiled.error;
+    std::vector<size_t> frames = frameStarts(r.events);
+    if (frames.size() < 5) {
+        return -1;
+    }
+    // every line has 6 writes plus one per column: the events of a frame are lines * (columns + 6) + 2
+    return static_cast<int>(frames[3] - frames[2]);
+}
+}
+
+TEST(TilesExampleTest, TheTileExamplesFillTheScreen) {
+    // 17 columns: 23 writes per line, 242 lines
+    EXPECT_EQ(242 * 23 + 2, pictureLines(readExample("xgs_tiles.c")));
+    EXPECT_EQ(242 * 23 + 2, pictureLines(readExample("xgs_joystick.c")));
+    EXPECT_EQ(242 * 23 + 2, pictureLines(readExample("pong.c")));
 }
