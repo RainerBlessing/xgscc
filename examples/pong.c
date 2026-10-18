@@ -175,7 +175,7 @@ void main(void) {
 
         if ((frame & 3) == 0) {
             if ((joystick & 1) && left_y > TOP) {
-                paddle(0, left_y + PADDLE - 1, EMPTY);
+                xgs_tile(0, left_y + PADDLE - 1, EMPTY);
                 left_y--;
                 paddle(0, left_y, BLOCK);
             }
@@ -192,7 +192,7 @@ void main(void) {
                 paddle(LAST_COLUMN, right_y, BLOCK);
             }
             if (right_y + 1 > ball_y && right_y > TOP) {
-                paddle(LAST_COLUMN, right_y + PADDLE - 1, EMPTY);
+                xgs_tile(LAST_COLUMN, right_y + PADDLE - 1, EMPTY);
                 right_y--;
                 paddle(LAST_COLUMN, right_y, BLOCK);
             }

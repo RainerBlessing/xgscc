@@ -191,3 +191,28 @@ TEST(PongTest, FitsIntoTheMachine) {
     EXPECT_LT(g.compiled.rom.size(), 4097u);
     EXPECT_GT(g.compiled.rom[0], 0);
 }
+
+TEST(PongTest, MovingThePaddleDownAndUpLeavesTheWallsAndTheMemoryAlone) {
+    Game g;
+    ASSERT_TRUE(g.start(0x02)) << g.compiled.error;
+    g.frames(60);
+    *g.cpu.getJoystrickr() = 0x01;
+    g.frames(60);
+    for (int x = 0; x < 16; x++) {
+        EXPECT_EQ(2, g.tile(x, 11)) << x;
+    }
+    // the byte behind the map is no part of it
+    EXPECT_EQ(0, g.cpu.getRAM()[g.compiled.variables.at("xgs_map") + 192]);
+    EXPECT_EQ(1, g.value("left_y"));
+}
+
+TEST(PongTest, TheRightPaddleLeavesTheWallsAloneToo) {
+    Game g;
+    ASSERT_TRUE(g.start(0)) << g.compiled.error;
+    for (int i = 0; i < 40; i++) {
+        g.frames(20);
+        EXPECT_EQ(2, g.tile(15, 11)) << i;
+        EXPECT_EQ(2, g.tile(15, 0)) << i;
+        EXPECT_EQ(2, g.tile(0, 11)) << i;
+    }
+}
