@@ -109,8 +109,8 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 					throw CompileError(1, "XGS_COLUMNS has to be a number from 1 to 255");
 				if (rows < 1 || rows > 255)
 					throw CompileError(1, "XGS_ROWS has to be a number from 1 to 255");
-				if (tileLines < 1 || tileLines > 128 || (tileLines & (tileLines - 1)) != 0)
-					throw CompileError(1, "XGS_TILE_LINES has to be a power of two from 1 to 128");
+				if (tileLines < 1 || tileLines > 255)
+					throw CompileError(1, "XGS_TILE_LINES has to be a number from 1 to 255");
 				if (rows * tileLines > 255)
 					throw CompileError(1, "XGS_ROWS times XGS_TILE_LINES is " + to_string(rows * tileLines) + ": the picture has at most 255 lines");
 				addXgsTileLibrary(&program, (int) columns, (int) rows, (int) tileLines);

@@ -97,14 +97,16 @@ void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
 	if (!found)
 		throw CompileError(1, "the tile map needs the table of the tile graphics: const uint8_t xgs_tiles[256] = { ... } (one colour for every line of every tile)");
 
+	// the map holds tile * lines: a shift if the lines are a power of two, else a multiplication
 	int shift = 0;
 	while ((1 << shift) < tileLines)
 		shift++;
+	bool powerOfTwo = (1 << shift) == tileLines;
 	ostringstream text;
 	text << "typedef unsigned char uint8_t;\n"
 		"uint8_t xgs_map[" << columns * rows << "];\n"
-		"void xgs_tile(uint8_t x, uint8_t y, uint8_t tile) { xgs_map[y * " << columns << " + x] = tile << " << shift << "; }\n"
-		"uint8_t xgs_get_tile(uint8_t x, uint8_t y) { return xgs_map[y * " << columns << " + x] >> " << shift << "; }\n";
+		"void xgs_tile(uint8_t x, uint8_t y, uint8_t tile) { xgs_map[y * " << columns << " + x] = tile " << (powerOfTwo ? "<< " : "* ") << (powerOfTwo ? shift : tileLines) << "; }\n"
+		"uint8_t xgs_get_tile(uint8_t x, uint8_t y) { return xgs_map[y * " << columns << " + x] " << (powerOfTwo ? ">> " : "/ ") << (powerOfTwo ? shift : tileLines) << "; }\n";
 	Program library = parse(tokenize(text.str()));
 	for (size_t i = 0; i < library.globals.size(); i++)
 		program->globals.insert(program->globals.begin() + i, std::move(library.globals[i]));

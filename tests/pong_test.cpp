@@ -64,7 +64,7 @@ public:
 
     // the tile number at a cell
     int tile(int x, int y) {
-        return cpu.getRAM()[compiled.variables.at("xgs_map") + y * 16 + x] / 16;
+        return cpu.getRAM()[compiled.variables.at("xgs_map") + y * 16 + x] / 20;
     }
 
     int tilesOf(int tileNumber) {

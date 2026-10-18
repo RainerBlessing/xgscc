@@ -175,6 +175,33 @@ TEST(TilesTest, TilesOfTwoAndEightLines) {
     checkPicture(eight, 12, 6, 8);
 }
 
+TEST(TilesTest, TilesOfTwentyLinesFillTheFullHeight) {
+    // 12 rows of 20 lines: the 240 lines of a television picture; 12 tiles of 20 lines
+    Result r = runProgram(program(16, 12, 20, patternBody(16, 12, 12)), 8);
+    ASSERT_TRUE(r.compiled.ok) << r.compiled.error;
+    checkPicture(r, 16, 12, 20);
+}
+
+TEST(TilesTest, TilesOfThreeAndSevenLines) {
+    Result three = runProgram(program(6, 10, 3, patternBody(6, 10, 85)), 8);
+    ASSERT_TRUE(three.compiled.ok) << three.compiled.error;
+    checkPicture(three, 6, 10, 3);
+    Result seven = runProgram(program(5, 9, 7, patternBody(5, 9, 36)), 8);
+    ASSERT_TRUE(seven.compiled.ok) << seven.compiled.error;
+    checkPicture(seven, 5, 9, 7);
+}
+
+TEST(TilesTest, ReadingBackATileOfTwentyLines) {
+    Result r = runProgram(
+        "#include <stdint.h>\n#define XGS_COLUMNS 8\n#define XGS_ROWS 4\n#define XGS_TILE_LINES 20\n#include <xgs.h>\n" + tileTable(20) +
+        "uint8_t a; uint8_t b; uint8_t m;\n"
+        "void main(void) { xgs_init(); xgs_tile(3, 2, 11); xgs_tile(7, 3, 5); a = xgs_get_tile(3, 2); b = xgs_get_tile(7, 3); m = xgs_map[2 * 8 + 3]; }\n", 2);
+    ASSERT_TRUE(r.compiled.ok) << r.compiled.error;
+    EXPECT_EQ(11, r.ram[r.compiled.variables.at("a")]);
+    EXPECT_EQ(5, r.ram[r.compiled.variables.at("b")]);
+    EXPECT_EQ(220, r.ram[r.compiled.variables.at("m")]);
+}
+
 TEST(TilesTest, ThirtyTwoColumnsOfNarrowCells) {
     Result r = runProgram(program(32, 6, 4, patternBody(32, 6, 64)), 8);
     ASSERT_TRUE(r.compiled.ok) << r.compiled.error;
@@ -296,10 +323,13 @@ TEST(TilesErrorTest, TooManyLines) {
     EXPECT_TRUE(contains(result.error, "255")) << result.error;
 }
 
-TEST(TilesErrorTest, TileLinesHaveToBeAPowerOfTwo) {
-    CompileResult result = compile("#include <stdint.h>\n#define XGS_TILE_LINES 6\n#include <xgs.h>\nconst uint8_t xgs_tiles[256] = { 1 };\nvoid main(void) { xgs_init(); }", "tiles.c");
-    ASSERT_FALSE(result.ok);
-    EXPECT_TRUE(contains(result.error, "XGS_TILE_LINES")) << result.error;
+TEST(TilesErrorTest, TileLinesFrom1To255) {
+    for (const char* bad : { "0", "256", "300" }) {
+        CompileResult result = compile(std::string("#include <stdint.h>\n#define XGS_ROWS 1\n#define XGS_TILE_LINES ") + bad +
+            "\n#include <xgs.h>\nconst uint8_t xgs_tiles[256] = { 1 };\nvoid main(void) { xgs_init(); }", "tiles.c");
+        ASSERT_FALSE(result.ok) << bad;
+        EXPECT_TRUE(contains(result.error, "XGS_TILE_LINES")) << result.error;
+    }
 }
 
 TEST(TilesErrorTest, TooManyColumns) {
