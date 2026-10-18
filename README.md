@@ -13,7 +13,7 @@ xgscc -O0 game.c -o game.hex   # without the optimizer (-O1 is the default)
 xgsemu game.hex
 ```
 
-This is stage 2 of `IMPLEMENTATION_PLAN.md`: a small subset of C with functions.
+A subset of C with functions, arrays, pointers, structs, 16 bit types and a preprocessor.
 
 ## The C that is supported
 

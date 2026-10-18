@@ -1,6 +1,6 @@
 # How the XGS ME makes its picture, and what that means for C
 
-A study for stage 4 of `IMPLEMENTATION_PLAN.md`. All numbers were **measured in the
+The study for the video library, with the results of building it. All numbers were **measured in the
 emulator** (xgsemu with the example programs of the XGS ME disc, run headless, every
 write to port RE recorded with its clock cycle). Nothing was checked on real hardware.
 
