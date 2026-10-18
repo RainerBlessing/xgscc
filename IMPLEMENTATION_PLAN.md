@@ -188,18 +188,34 @@ the one before):
 ## Stage 4: the XGS library and the video kernel
 
 **Goal**: A game written in C: joystick, sound, SRAM and a picture.
-**Needs a study first**: how the examples produce the video (line loop, port RE
-timing, where a game can run between lines) and how much time is left for C.
-`kj_pong_01` and `rem_tetris_01` are the references. Write the findings in
-`doc/video.md` before any code.
-**Design**:
-- `xgs.h`: `joystick()`, `sound_write()`, SRAM read/write, `wait_frame()`, a
-  small drawing interface on top of what the kernel can show.
-- The kernel is cycle-exact assembler that the compiler never touches, called
-  from C. How C and the kernel share the CPU (frame structure) is the result of
-  the study.
-- The code generator marks cycle-critical routines: no `autopage`, no inserted
-  instructions, a cycle count per routine in the map.
+**Study** (done, `doc/video.md`): the picture is a program that writes port RE; a line
+is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20 to
+70 % of the frame free, in pieces of about 4200 cycles in the blank lines.
+**Design** (from the study):
+- The kernel is cycle-exact assembler that the compiler never touches. C cannot be
+  interrupted (no interrupts), so the frame has two parts: `xgs_picture()` makes the
+  vertical sync and the picture lines, then C (`update()`) runs in the rest of the
+  frame, then `xgs_wait_frame()` pads to the exact frame period with the RTCC. With
+  192 picture lines C has about 330 000 cycles per frame. The vertical blank has no
+  line syncs; a later mode keeps them with `xgs_yield()`.
+- The picture is a tile map (small map in RAM, tiles as tables in ROM read with
+  `iread`, 15 cycles per cell like Tetris), then sprites from a list in RAM.
+- The compiler gets functions written in assembler: a prototype in C, arguments in
+  fixed named places, the text goes into the ROM.
+- `xgs.h`: joystick, sound, SRAM, `xgs_tile()`, the frame functions.
+**Steps**:
+1. **4a** the kernel: vertical sync, N lines of one colour, `xgs_wait_frame`. Tests
+   headless: every line 5080 cycles, the prefix at the offsets of `doc/video.md`, the
+   frame within 20 cycles of 1 330 956, the picture on `Video`.
+   Status: Not Started
+2. **4b** assembler functions in the compiler, the kernel of 4a is the first user.
+   Status: Not Started
+3. **4c** the tile map kernel and `xgs.h`.
+   Status: Not Started
+4. **4d** joystick, sound and SRAM as C functions.
+   Status: Not Started
+5. **4e** sprites, and Pong in C.
+   Status: Not Started
 **Success Criteria**:
 - A Pong written in C runs in `xgsemu` at 60 frames with a stable picture and
   sound.
@@ -210,7 +226,7 @@ timing, where a game can run between lines) and how much time is left for C.
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: Not Started
+**Status**: In Progress (the study is done, 4a next)
 
 ## Stage 5: size, speed and use
 
