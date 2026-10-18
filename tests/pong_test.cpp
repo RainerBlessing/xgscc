@@ -64,13 +64,13 @@ public:
 
     // the tile number at a cell
     int tile(int x, int y) {
-        return cpu.getRAM()[compiled.variables.at("xgs_map") + y * 16 + x] / 20;
+        return cpu.getRAM()[compiled.variables.at("xgs_map") + y * 17 + x] / 22;
     }
 
     int tilesOf(int tileNumber) {
         int count = 0;
-        for (int y = 0; y < 12; y++) {
-            for (int x = 0; x < 16; x++) {
+        for (int y = 0; y < 11; y++) {
+            for (int x = 0; x < 17; x++) {
                 count += tile(x, y) == tileNumber;
             }
         }
@@ -94,14 +94,14 @@ TEST(PongTest, TheCourtHasWallsAndBothPaddles) {
     Game g;
     ASSERT_TRUE(g.start(0x10)) << g.compiled.error;
     g.frames(3);
-    for (int x = 0; x < 16; x++) {
-        EXPECT_EQ(2, g.tile(x, 11)) << x;
+    for (int x = 0; x < 17; x++) {
+        EXPECT_EQ(2, g.tile(x, 10)) << x;
     }
     int leftY = g.value("left_y");
     int rightY = g.value("right_y");
     for (int i = 0; i < 3; i++) {
         EXPECT_EQ(PADDLE_TILE, g.tile(0, leftY + i));
-        EXPECT_EQ(PADDLE_TILE, g.tile(15, rightY + i));
+        EXPECT_EQ(PADDLE_TILE, g.tile(16, rightY + i));
     }
 }
 
@@ -130,8 +130,8 @@ TEST(PongTest, TheBallStaysInTheCourt) {
     for (int i = 0; i < 60; i++) {
         g.frames(3);
         EXPECT_GE(g.value("ball_y"), 1) << i;
-        EXPECT_LE(g.value("ball_y"), 10) << i;
-        EXPECT_LE(g.value("ball_x"), 15) << i;
+        EXPECT_LE(g.value("ball_y"), 9) << i;
+        EXPECT_LE(g.value("ball_x"), 16) << i;
     }
 }
 
@@ -149,9 +149,9 @@ TEST(PongTest, DownOnTheJoystickMovesThePaddleDown) {
     Game g;
     ASSERT_TRUE(g.start(0x12)) << g.compiled.error;
     g.frames(60);
-    EXPECT_EQ(8, g.value("left_y"));
-    EXPECT_EQ(PADDLE_TILE, g.tile(0, 10));
-    EXPECT_NE(PADDLE_TILE, g.tile(0, 7));
+    EXPECT_EQ(7, g.value("left_y"));
+    EXPECT_EQ(PADDLE_TILE, g.tile(0, 9));
+    EXPECT_NE(PADDLE_TILE, g.tile(0, 6));
 }
 
 TEST(PongTest, ThePaddlesAreNotLeftBehindOnTheScreen) {
@@ -184,7 +184,7 @@ TEST(PongTest, TheScoreIsShownInTheTopRow) {
     ASSERT_TRUE(g.start(0x10)) << g.compiled.error;
     g.frames(900);
     int shown = 0;
-    for (int x = 1; x < 15; x++) {
+    for (int x = 1; x < 16; x++) {
         shown += g.tile(x, 0) == BLOCK;
     }
     EXPECT_EQ(g.value("score_left") + g.value("score_right"), shown);
@@ -203,11 +203,11 @@ TEST(PongTest, MovingThePaddleDownAndUpLeavesTheWallsAndTheMemoryAlone) {
     g.frames(60);
     *g.cpu.getJoystrickr() = 0x11;
     g.frames(60);
-    for (int x = 0; x < 16; x++) {
-        EXPECT_EQ(2, g.tile(x, 11)) << x;
+    for (int x = 0; x < 17; x++) {
+        EXPECT_EQ(2, g.tile(x, 10)) << x;
     }
     // the byte behind the map is no part of it
-    EXPECT_EQ(0, g.cpu.getRAM()[g.compiled.variables.at("xgs_map") + 192]);
+    EXPECT_EQ(0, g.cpu.getRAM()[g.compiled.variables.at("xgs_map") + 187]);
     EXPECT_EQ(1, g.value("left_y"));
 }
 
@@ -216,9 +216,9 @@ TEST(PongTest, TheRightPaddleLeavesTheWallsAloneToo) {
     ASSERT_TRUE(g.start(0x10)) << g.compiled.error;
     for (int i = 0; i < 40; i++) {
         g.frames(20);
-        EXPECT_EQ(2, g.tile(15, 11)) << i;
-        EXPECT_EQ(2, g.tile(15, 0)) << i;
-        EXPECT_EQ(2, g.tile(0, 11)) << i;
+        EXPECT_EQ(2, g.tile(16, 10)) << i;
+        EXPECT_EQ(2, g.tile(16, 0)) << i;
+        EXPECT_EQ(2, g.tile(0, 10)) << i;
     }
 }
 
@@ -288,7 +288,7 @@ TEST(PongTitleTest, TheBallUnderTheTitleBlinks) {
     bool off = false;
     for (int i = 0; i < 80; i++) {
         g.frames(1);
-        (g.tile(8, 10) == BALL_TILE ? on : off) = true;
+        (g.tile(8, 9) == BALL_TILE ? on : off) = true;
     }
     EXPECT_TRUE(on);
     EXPECT_TRUE(off);
@@ -313,4 +313,23 @@ TEST(PongTitleTest, AGameEndsAtEightPointsAndTheTitleComesBack) {
     g.frames(60);
     EXPECT_EQ(1, g.value("playing"));
     EXPECT_EQ(0, g.value("score_left") + g.value("score_right"));
+}
+
+TEST(PongTitleTest, TheTitleIsInTheMiddleOfTheScreen) {
+    Game g;
+    ASSERT_TRUE(g.start(0)) << g.compiled.error;
+    g.frames(3);
+    int left = 99, right = -1, top = 99, bottom = -1;
+    for (int y = 0; y < 11; y++) {
+        for (int x = 0; x < 17; x++) {
+            if (g.tile(x, y) == LETTER) {
+                left = x < left ? x : left;
+                right = x > right ? x : right;
+                top = y < top ? y : top;
+                bottom = y > bottom ? y : bottom;
+            }
+        }
+    }
+    EXPECT_EQ(16 - right, left);        // as many empty columns on the left as on the right
+    EXPECT_EQ(10 - bottom, top);        // and as many empty rows above as below
 }
