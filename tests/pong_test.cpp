@@ -396,53 +396,68 @@ protected:
     }
 };
 
+// The ball next to a paddle is caught if it is in a row of the paddle as drawn, whichever way it moves on.
 TEST_F(PongCollisionTest, TheBallAtTheRightPaddleBouncesOnEveryRowOfIt) {
-    for (int paddle = 1; paddle <= 7; paddle++) {
-        for (int row = 1; row <= 9; row++) {
-            // the ball comes down onto row `row`: it was in the row above
-            g.moveBallFrom(15, row - 1, 1, 1, 4, paddle);
-            bool hit = row >= paddle && row < paddle + 3;
-            std::string where = "paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
-            if (hit) {
-                EXPECT_EQ(0, g.value("ball_right")) << where;
-                EXPECT_EQ(14, g.value("ball_x")) << where;
-                EXPECT_EQ(row, g.value("ball_y")) << where;
-                EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
-            } else {
-                EXPECT_EQ(1, g.value("score_left")) << where;
-                EXPECT_EQ(0, g.value("score_right")) << where;
-                EXPECT_EQ(8, g.value("ball_x")) << where;     // served again
+    for (int down = 0; down <= 1; down++) {
+        for (int paddle = 1; paddle <= 7; paddle++) {
+            for (int row = 1; row <= 9; row++) {
+                g.moveBallFrom(15, row, 1, down, 4, paddle);
+                bool hit = row >= paddle && row < paddle + 3;
+                std::string where = std::string(down ? "down" : "up") + ", paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
+                if (hit) {
+                    int next = down ? (row == 9 ? 8 : row + 1) : (row == 1 ? 2 : row - 1);
+                    EXPECT_EQ(0, g.value("ball_right")) << where;
+                    EXPECT_EQ(14, g.value("ball_x")) << where;
+                    EXPECT_EQ(next, g.value("ball_y")) << where;
+                    EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
+                } else {
+                    EXPECT_EQ(1, g.value("score_left")) << where;
+                    EXPECT_EQ(0, g.value("score_right")) << where;
+                    EXPECT_EQ(8, g.value("ball_x")) << where;     // served again
+                }
             }
         }
     }
 }
 
 TEST_F(PongCollisionTest, TheBallAtTheLeftPaddleBouncesOnEveryRowOfIt) {
-    for (int paddle = 1; paddle <= 7; paddle++) {
-        for (int row = 1; row <= 9; row++) {
-            g.moveBallFrom(1, row - 1, 0, 1, paddle, 4);
-            bool hit = row >= paddle && row < paddle + 3;
-            std::string where = "paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
-            if (hit) {
-                EXPECT_EQ(1, g.value("ball_right")) << where;
-                EXPECT_EQ(2, g.value("ball_x")) << where;
-                EXPECT_EQ(row, g.value("ball_y")) << where;
-                EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
-            } else {
-                EXPECT_EQ(1, g.value("score_right")) << where;
-                EXPECT_EQ(0, g.value("score_left")) << where;
-                EXPECT_EQ(8, g.value("ball_x")) << where;
+    for (int down = 0; down <= 1; down++) {
+        for (int paddle = 1; paddle <= 7; paddle++) {
+            for (int row = 1; row <= 9; row++) {
+                g.moveBallFrom(1, row, 0, down, paddle, 4);
+                bool hit = row >= paddle && row < paddle + 3;
+                std::string where = std::string(down ? "down" : "up") + ", paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
+                if (hit) {
+                    int next = down ? (row == 9 ? 8 : row + 1) : (row == 1 ? 2 : row - 1);
+                    EXPECT_EQ(1, g.value("ball_right")) << where;
+                    EXPECT_EQ(2, g.value("ball_x")) << where;
+                    EXPECT_EQ(next, g.value("ball_y")) << where;
+                    EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
+                } else {
+                    EXPECT_EQ(1, g.value("score_right")) << where;
+                    EXPECT_EQ(0, g.value("score_left")) << where;
+                    EXPECT_EQ(8, g.value("ball_x")) << where;
+                }
             }
         }
     }
 }
 
-TEST_F(PongCollisionTest, TheBallGoingUpIsTestedAtItsNewRowToo) {
-    for (int row = 1; row <= 8; row++) {
-        g.moveBallFrom(15, row + 1, 1, 0, 4, 4);       // moving up onto `row`
-        bool hit = row >= 4 && row < 7;
-        EXPECT_EQ(hit ? 0 : 1, hit ? g.value("ball_right") : g.value("score_left")) << row;
-    }
+TEST_F(PongCollisionTest, ABallThatTouchesTheEdgeOfThePaddleIsCaught) {
+    // the paddle is drawn at rows 3..5 and the ball next to its last row, on its way down
+    g.moveBallFrom(15, 5, 1, 1, 4, 3);
+    EXPECT_EQ(0, g.value("ball_right"));
+    EXPECT_EQ(0, g.value("score_left"));
+    // and next to its first row, on its way up
+    g.moveBallFrom(15, 3, 1, 0, 4, 3);
+    EXPECT_EQ(0, g.value("ball_right"));
+}
+
+TEST_F(PongCollisionTest, ABallThatOnlyTouchesTheCornerOfThePaddleIsMissed) {
+    g.moveBallFrom(15, 2, 1, 1, 4, 3);      // one row above the paddle, moving down towards it
+    EXPECT_EQ(1, g.value("score_left"));
+    g.moveBallFrom(15, 6, 1, 0, 4, 3);      // one row below the paddle, moving up towards it
+    EXPECT_EQ(1, g.value("score_left"));
 }
 
 TEST_F(PongCollisionTest, TheBallMovesOneCellAtATimeAndNeverReachesAPaddleColumn) {
@@ -460,16 +475,6 @@ TEST_F(PongCollisionTest, TheBallBouncesOffTheTopAndTheBottomWall) {
     g.moveBallFrom(8, 9, 1, 1, 4, 4);          // going down at the bottom row
     EXPECT_EQ(8, g.value("ball_y"));
     EXPECT_EQ(0, g.value("ball_down"));
-}
-
-TEST_F(PongCollisionTest, ABounceAtTheCornerGoesOffTheWallAndTheNewRowDecidesTheHit) {
-    // right paddle at rows 7..9: the ball at the bottom row bounces up to row 8 and is caught
-    g.moveBallFrom(15, 9, 1, 1, 4, 7);
-    EXPECT_EQ(0, g.value("ball_right"));
-    EXPECT_EQ(8, g.value("ball_y"));
-    // right paddle at rows 1..3: the same ball, now at row 8, is missed
-    g.moveBallFrom(15, 9, 1, 1, 4, 1);
-    EXPECT_EQ(1, g.value("score_left"));
 }
 
 TEST_F(PongCollisionTest, ABounceIsDrawnAndMakesASound) {

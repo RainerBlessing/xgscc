@@ -141,23 +141,8 @@ uint8_t hits(uint8_t y) {
 void move_ball(void) {
     clear_cell(ball_x, ball_y);
 
-    if (ball_down) {
-        if (ball_y == BOTTOM) {
-            ball_down = 0;
-            xgs_note(0, 30);
-        }
-    } else {
-        if (ball_y == TOP) {
-            ball_down = 1;
-            xgs_note(0, 30);
-        }
-    }
-    if (ball_down) {
-        ball_y++;
-    } else {
-        ball_y--;
-    }
-
+    // The ball is in the cell next to a paddle: it is caught if it is in the row of the
+    // paddle as it is drawn now, not in the row that it moves to.
     if (ball_right) {
         if (ball_x == LAST_COLUMN - 1) {
             if (hits(right_y)) {
@@ -178,6 +163,23 @@ void move_ball(void) {
                 return;
             }
         }
+    }
+
+    if (ball_down) {
+        if (ball_y == BOTTOM) {
+            ball_down = 0;
+            xgs_note(0, 30);
+        }
+    } else {
+        if (ball_y == TOP) {
+            ball_down = 1;
+            xgs_note(0, 30);
+        }
+    }
+    if (ball_down) {
+        ball_y++;
+    } else {
+        ball_y--;
     }
     if (ball_right) {
         ball_x++;

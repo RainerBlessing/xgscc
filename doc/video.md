@@ -286,7 +286,7 @@ needs SDL, which `xgscc` does not use, so it is not part of the tests.
 `XGS_COLUMNS`, `XGS_ROWS` and `XGS_TILE_LINES` switch `xgs_frame()` to a picture of
 tiles (`xgsTileFrameSource` in `src/kernel.cpp`). The prefix of every line is the same
 as before (writes at 0, 120, 496, 544, 744 cycles), then the cells come from 872 on,
-`4180 / columns` cycles apart, and a last write to the blanking level ends the line
+`4090 / columns` cycles apart, and a last write to the blanking level ends the line
 (`columns + 6` writes per line). The tests record them and check each cell's value
 and cycle against the map and the table, for 1 to 32 columns and tiles of 1 to 16 lines.
 

@@ -250,7 +250,7 @@ tiles:
 
 ```c
 #include <stdint.h>
-#define XGS_COLUMNS 16          // 1 to 255 (the cells are 4180 / columns cycles wide)
+#define XGS_COLUMNS 16          // 1 to 255 (the cells are 4090 / columns cycles wide)
 #define XGS_ROWS 12
 #define XGS_TILE_LINES 16       // 1 to 255; rows * tile lines <= 255 (240 lines fill a television)
 #include <xgs.h>
