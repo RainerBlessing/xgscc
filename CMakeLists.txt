@@ -20,6 +20,7 @@ add_library(xgscc_lib STATIC
     src/parser.cpp
     src/runtime.cpp
     src/hexwriter.cpp
+    src/objwriter.cpp
     src/kernel.cpp
     src/library.cpp
     src/memorymap.cpp

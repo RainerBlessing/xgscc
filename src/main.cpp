@@ -1,5 +1,5 @@
 // xgscc [-S] [--map] [-O0|-O1] input.c -o output: compiles C for the XGameStation Micro Edition.
-// output is a hex file, with -S the assembler source. --map writes where everything
+// output is a hex file, or a binary image if it ends in .obj, with -S the assembler source. --map writes where everything
 // is into a file next to the output (game.hex -> game.map).
 #include <fstream>
 #include <iostream>
@@ -8,6 +8,7 @@
 #include "asm.h"
 #include "compiler.h"
 #include "hexwriter.h"
+#include "objwriter.h"
 
 static const int ROM_WORDS = 4096;
 
@@ -15,6 +16,11 @@ static int usage()
 {
 	std::cerr << "usage: xgscc [-S] [--map] [-O0|-O1] input.c -o output\n";
 	return 2;
+}
+
+static bool hasExtension(const std::string& path, const std::string& extension)
+{
+	return path.size() >= extension.size() && path.compare(path.size() - extension.size(), extension.size(), extension) == 0;
 }
 
 // game.hex -> game.map
@@ -92,7 +98,7 @@ int main(int argc, char** argv)
 		std::cerr << input << ": internal error in the generated code: " << error << "\n";
 		return 1;
 	}
-	if (!writeHexFile(output, rom, ROM_WORDS))
+	if (!(hasExtension(output, ".obj") ? writeObjFile(output, rom, ROM_WORDS) : writeHexFile(output, rom, ROM_WORDS)))
 	{
 		std::cerr << output << ": cannot write\n";
 		return 1;

@@ -56,6 +56,31 @@ protected:
     }
 };
 
+TEST_F(CliTest, AnObjExtensionWritesTheBinaryImage) {
+    Result result = xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/counter.obj"));
+    EXPECT_EQ(0, result.exitCode) << result.output;
+    std::string image = readFile(dir + "/counter.obj");
+    ASSERT_EQ(8192u, image.size());
+    // the same program as the hex file: the first instruction of the reset code sits at 0
+    Result hex = xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/counter2.hex"));
+    EXPECT_EQ(0, hex.exitCode) << hex.output;
+    std::string text = readFile(dir + "/counter2.hex");
+    // the hex record at address 0 starts with the low byte of word 0
+    char expected[3] = { 0, 0, 0 };
+    snprintf(expected, sizeof(expected), "%02X", (unsigned char) image[0]);
+    size_t colon = text.find(":10000000");
+    ASSERT_NE(std::string::npos, colon) << text;
+    EXPECT_EQ(std::string(expected), text.substr(colon + 9, 2));
+}
+
+TEST_F(CliTest, TheObjImageHoldsEmptyWordsAs0FFF) {
+    xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/e.obj"));
+    std::string image = readFile(dir + "/e.obj");
+    ASSERT_EQ(8192u, image.size());
+    EXPECT_EQ('\xff', image[8000]);
+    EXPECT_EQ('\x0f', image[8001]);
+}
+
 TEST_F(CliTest, WritesAHexFile) {
     Result result = xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/counter.hex"));
     EXPECT_EQ(0, result.exitCode) << result.output;

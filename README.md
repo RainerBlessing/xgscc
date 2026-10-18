@@ -87,8 +87,8 @@ void add(uint8_t value)
   expanded first, a macro is not expanded inside itself; no `#` and `##`), `#undef`, `#if`,
   `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` (the operators of C, `defined(X)`,
   unknown names are 0), `#error`, and `#include`: `<stdint.h>` and `<xgs.h>` are built
-  in, `"file.h"` reads the file from the directory of the source (then from the
-  directory of the file that includes it; a file that includes itself is refused after 16
+  in, `"file.h"` reads the file relative to the directory of the file that includes it (a
+  file that includes itself is refused after 16
   levels). Not there: `#pragma`, `#line`, `-D` on the command line. A line number in an
   error that comes from an included file is the line in that file, the message does not
   name the file.
