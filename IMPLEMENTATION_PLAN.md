@@ -230,8 +230,10 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    of the assembler set a stale page when insertions moved a label (fixed, tested in
    xgsemu); a timer test of the CPU read ROM that was never programmed.
    Status: Complete
-4. **4d** joystick, sound and SRAM as C functions.
-   Status: Not Started
+4. **4d** joystick, sound and SRAM as C functions: `xgs_joystick`, `xgs_sound`,
+   `xgs_note`, `xgs_sram_read/write/bank`, assembler routines with parameters (in banks,
+   marked with `@bank`). Tested against the ports of the emulator.
+   Status: Complete
 5. **4e** sprites, and Pong in C.
    Status: Not Started
 **Success Criteria**:
@@ -244,7 +246,7 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: In Progress (4d next)
+**Status**: In Progress (4e next)
 
 ## Stage 5: size, speed and use
 

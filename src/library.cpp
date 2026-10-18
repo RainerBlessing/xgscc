@@ -8,6 +8,15 @@
 
 using namespace std;
 
+static Parameter parameter(const string& name, int size)
+{
+	Parameter result;
+	result.name = name;
+	result.line = 0;
+	result.type = Type(size, false);
+	return result;
+}
+
 static Function assemblerFunction(const string& name, const string& text, const vector<string>& registers)
 {
 	Function function;
@@ -20,6 +29,41 @@ static Function assemblerFunction(const string& name, const string& text, const 
 	return function;
 }
 
+// the functions for the joystick, the sound chip and the SRAM
+static void addXgsHardware(Program* program)
+{
+	vector<string> none;
+	Function joystick = assemblerFunction("xgs_joystick", xgsJoystickSource(), none);
+	joystick.returnsValue = true;
+	joystick.returnType = Type(1, false);
+	program->functions.push_back(std::move(joystick));
+
+	Function sound = assemblerFunction("xgs_sound", xgsSoundSource(), none);
+	sound.parameters.push_back(parameter("address", 1));
+	sound.parameters.push_back(parameter("data", 1));
+	program->functions.push_back(std::move(sound));
+
+	Function read = assemblerFunction("xgs_sram_read", xgsSramReadSource(), none);
+	read.parameters.push_back(parameter("addr", 2));
+	read.returnsValue = true;
+	read.returnType = Type(1, false);
+	program->functions.push_back(std::move(read));
+
+	Function write = assemblerFunction("xgs_sram_write", xgsSramWriteSource(), none);
+	write.parameters.push_back(parameter("addr", 2));
+	write.parameters.push_back(parameter("value", 1));
+	program->functions.push_back(std::move(write));
+
+	Function bank = assemblerFunction("xgs_sram_bank", xgsSramBankSource(), none);
+	bank.parameters.push_back(parameter("bank", 1));
+	program->functions.push_back(std::move(bank));
+
+	Program library = parse(tokenize("typedef unsigned char uint8_t;\n"
+		"void xgs_note(uint8_t channel, uint8_t note) { xgs_sound(2, (channel << 6) | note); }\n"));
+	for (size_t i = 0; i < library.functions.size(); i++)
+		program->functions.push_back(std::move(library.functions[i]));
+}
+
 void addXgsLibrary(Program* program, int lines, int colour)
 {
 	vector<string> none;
@@ -28,6 +72,7 @@ void addXgsLibrary(Program* program, int lines, int colour)
 	frameRegisters.push_back("n");
 	program->functions.push_back(assemblerFunction("xgs_init", xgsInitSource(), none));
 	program->functions.push_back(assemblerFunction("xgs_frame", xgsFrameSource(lines, colour), frameRegisters));
+	addXgsHardware(program);
 }
 
 void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
@@ -67,6 +112,7 @@ void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
 	frameRegisters.push_back("r");
 	program->functions.push_back(assemblerFunction("xgs_init", xgsInitSource(), none));
 	program->functions.push_back(assemblerFunction("xgs_frame", xgsTileFrameSource(columns, rows, tileLines), frameRegisters));
+	addXgsHardware(program);
 }
 
 static string trim(const string& text)

@@ -193,6 +193,25 @@ longer, the lines stay exact. `#define XGS_LINES n` (1 to 255) and `#define XGS_
 before the include change the picture (one colour). `examples/xgs_blank.c` is the
 smallest program.
 
+### Joystick, sound and SRAM
+
+All three are functions of `<xgs.h>`; `xgs_init()` sets the ports up first. They are
+assembler routines, so they work in every picture mode.
+
+| function | what it does |
+|---|---|
+| `uint8_t xgs_joystick()` | the buttons of the first joystick: `0x01` up, `0x02` down, `0x04` left, `0x08` right, `0x10` fire; 1 = pressed |
+| `void xgs_sound(a, d)` | one command to the sound chip (BU8763): `a` is the register (0 OPER, 1 MODE, 2 FREQ, 3 GAIN), `d` the 8 bits of data |
+| `void xgs_note(channel, note)` | `xgs_sound(2, channel << 6 \| note)`: the pitch of a channel (note 0 is A2, 110 Hz, a semitone per step) |
+| `uint8_t xgs_sram_read(addr)` | one byte of the 128 KB SRAM, `addr` is 16 bits |
+| `void xgs_sram_write(addr, value)` | writes one |
+| `void xgs_sram_bank(b)` | 0 or 1: which 64 KB half the two functions above use |
+
+Reading the joystick takes about 200 cycles, a command to the sound chip about 250, a
+byte of the SRAM about 330 (the page of 12 bits is shifted in bit by bit): too long for
+a picture line, but nothing for the time of the game. `examples/xgs_joystick.c` moves a
+tile and plays a note.
+
 ### Tiles
 
 With `XGS_COLUMNS`, `XGS_ROWS` or `XGS_TILE_LINES` defined the picture is a map of

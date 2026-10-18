@@ -176,6 +176,16 @@ string xgsInitSource()
 	k.line("mov !option, w");			// the RTCC counts every 256th cycle
 	k.line("mov w, #" + hexText(BLANKING_LEVEL));
 	k.line("mov re, w");
+	k.line("mov w, #4");
+	k.line("mov !ra, w");				// RA2 is the data of the joystick, the rest is output
+	k.line("mov w, #0");
+	k.line("mov !rc, w");				// the control lines of the SRAM
+	k.line("mov w, #ff");
+	k.line("mov !rd, w");				// the data bus of the SRAM is an input until a write
+	k.line("mov w, #3");
+	k.line("mov ra, w");				// joystick latch and clock idle, the sound chip idle
+	k.line("mov w, #c0");
+	k.line("mov rc, w");				// SRAM deselected, set to read
 	k.line("clr rtcc");
 	k.line("retp");
 	return k.text();
@@ -297,5 +307,134 @@ string xgsTileFrameSource(int columns, int rows, int tileLines)
 	k.delay(housekeeping - 17);
 	k.line("jmp xgs_line");
 
+	return k.text();
+}
+
+// The joystick: 16 bits are clocked out of the shift register, the last five are the buttons.
+string xgsJoystickSource()
+{
+	Kernel k("{acc_hi}");
+	k.line("setb ra.0");				// the clock is high before the first falling edge
+	k.line("clrb ra.1");				// the first bit that comes is bit 15
+	k.line("setb ra.1");
+	k.line("mov w, #10");
+	k.line("mov {acc_hi}, w");
+	k.label("xgs_joy_bit");
+	k.line("setb ra.0");
+	k.line("clrb ra.0");				// falling edge: the next bit is on RA2, 0 means pressed
+	k.line("setb status.0");
+	k.line("snb ra.2");
+	k.line("clrb status.0");
+	k.line("rl {acc_lo}");
+	k.line("decsz {acc_hi}");
+	k.line("jmp xgs_joy_bit");
+	k.line("mov w, #1f");
+	k.line("and w, {acc_lo}");
+	k.line("retp");
+	return k.text();
+}
+
+// A command of the sound chip: 11 bits, the 3 of the address and the 8 of the data, the
+// highest first. SDATA is taken over at the rising edge of SCLK, the command at the rising edge of SSTB.
+string xgsSoundSource()
+{
+	Kernel k("{acc_hi}");
+	k.line("mov w, #5");
+	k.line("mov {acc_hi}, w");
+	k.label("xgs_snd_align");
+	k.line("clrb status.0");			// address and data as one number, moved up by 5 bits
+	k.line("rl {data}");
+	k.line("rl {address}");
+	k.line("decsz {acc_hi}");
+	k.line("jmp xgs_snd_align");
+	k.line("mov w, #b");
+	k.line("mov {acc_hi}, w");
+	k.label("xgs_snd_bit");
+	k.line("clrb status.0");
+	k.line("rl {data}");
+	k.line("rl {address}");				// the carry is the next bit
+	k.line("clrb ra.4");
+	k.line("snb status.0");
+	k.line("setb ra.4");
+	k.line("setb ra.3");
+	k.line("clrb ra.3");
+	k.line("decsz {acc_hi}");
+	k.line("jmp xgs_snd_bit");
+	k.line("setb ra.5");
+	k.line("clrb ra.5");
+	k.line("retp");
+	return k.text();
+}
+
+namespace
+{
+	// The address of the SRAM: RA7 is bit 16, the 12 bits of bits 15..4 are shifted in
+	// (RC5 is the bit, RC4 the clock), the low four bits are on RC0..3. The chip is
+	// deselected (RC6 high) until all of it is set.
+	void sramAddress(Kernel& k, const string& name)
+	{
+		k.line("mov w, #f");
+		k.line("and w, {addr}");
+		k.line("mov {acc_lo}, w");
+		k.line("setb rc.6");
+		k.line("clrb rc.4");
+		k.line("mov w, #c");
+		k.line("mov {acc_hi}, w");
+		k.label(name);
+		k.line("clrb status.0");
+		k.line("rl {addr}");
+		k.line("rl {addr.hi}");
+		k.line("clrb rc.5");
+		k.line("snb status.0");
+		k.line("setb rc.5");
+		k.line("setb rc.4");
+		k.line("clrb rc.4");
+		k.line("decsz {acc_hi}");
+		k.line("jmp " + name);
+		k.line("mov w, rc");
+		k.line("and w, #f0");
+		k.line("or w, {acc_lo}");
+		k.line("mov rc, w");
+	}
+}
+
+string xgsSramReadSource()
+{
+	Kernel k("{acc_hi}");
+	sramAddress(k, "xgs_rd_bit");
+	k.line("setb rc.7");
+	k.line("clrb rc.6");				// the chip is selected: the byte is read
+	k.line("mov w, rd");
+	k.line("setb rc.6");
+	k.line("retp");
+	return k.text();
+}
+
+string xgsSramWriteSource()
+{
+	Kernel k("{acc_hi}");
+	sramAddress(k, "xgs_wr_bit");
+	k.line("mov m, #f");				// MODE selects the direction registers
+	k.line("mov w, #0");
+	k.line("mov !rd, w");				// the data bus is an output
+	k.line("mov w, {value}");
+	k.line("mov rd, w");
+	k.line("clrb rc.7");
+	k.line("clrb rc.6");				// the chip is selected: the byte is written
+	k.line("setb rc.6");
+	k.line("setb rc.7");
+	k.line("mov w, #ff");
+	k.line("mov !rd, w");
+	k.line("retp");
+	return k.text();
+}
+
+string xgsSramBankSource()
+{
+	Kernel k("{acc_hi}");
+	k.line("clrb ra.7");
+	k.line("snb {bank}.0");
+	k.line("setb ra.7");
+	k.line("retp");
 	return k.text();
 }

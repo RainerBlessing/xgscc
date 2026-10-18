@@ -44,4 +44,13 @@ std::string xgsFrameSource(int lines, int colour);
  */
 std::string xgsTileFrameSource(int columns, int rows, int tileLines);
 
+/** xgs_joystick(): the buttons (0x01 up, 0x02 down, 0x04 left, 0x08 right, 0x10 fire; 1 = pressed). */
+std::string xgsJoystickSource();
+/** xgs_sound(address, data): one command to the sound chip. Parameters {address} and {data}. */
+std::string xgsSoundSource();
+/** xgs_sram_read(addr), xgs_sram_write(addr, value), xgs_sram_bank(bank): the 128 KB SRAM. */
+std::string xgsSramReadSource();
+std::string xgsSramWriteSource();
+std::string xgsSramBankSource();
+
 #endif /*KERNEL_H_*/

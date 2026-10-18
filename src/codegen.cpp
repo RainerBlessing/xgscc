@@ -2337,20 +2337,39 @@ namespace
 				pinned.insert(label);
 				names[function.registers[i]] = label;
 			}
-			string text;
-			for (size_t at = 0; at < function.assembly.size();)
+			// A parameter may be in a bank: a line that names one gets the "@bank" marker
+			// in front, which the bank pass turns into a bank instruction where needed.
+			set<string> parameterLabelNames;
+			for (size_t i = 0; i < function.parameterLabels.size(); i++)
 			{
-				if (function.assembly[at] != '{')
+				parameterLabelNames.insert(function.parameterLabels[i].lo);
+				if (!function.parameterLabels[i].hi.empty())
+					parameterLabelNames.insert(function.parameterLabels[i].hi);
+			}
+			string text;
+			istringstream source(function.assembly);
+			string sourceLine;
+			while (getline(source, sourceLine))
+			{
+				string markers;
+				string converted;
+				for (size_t at = 0; at < sourceLine.size();)
 				{
-					text += function.assembly[at++];
-					continue;
+					if (sourceLine[at] != '{')
+					{
+						converted += sourceLine[at++];
+						continue;
+					}
+					size_t end = sourceLine.find('}', at);
+					string name = end == string::npos ? "" : sourceLine.substr(at + 1, end - at - 1);
+					if (!names.count(name))
+						throw CompileError(function.line, "the assembler routine " + function.name + " uses {" + name + "}, which is no parameter or register");
+					if (parameterLabelNames.count(names[name]))
+						markers += "        @bank " + names[name] + "\n";
+					converted += names[name];
+					at = end + 1;
 				}
-				size_t end = function.assembly.find('}', at);
-				string name = end == string::npos ? "" : function.assembly.substr(at + 1, end - at - 1);
-				if (!names.count(name))
-					throw CompileError(function.line, "the assembler routine " + function.name + " uses {" + name + "}, which is no parameter or register");
-				text += names[name];
-				at = end + 1;
+				text += markers + converted + "\n";
 			}
 			function.code << "        autopage off\n" << function.entry << ":\n";
 			istringstream lines(text);

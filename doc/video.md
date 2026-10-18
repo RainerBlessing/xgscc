@@ -305,3 +305,28 @@ and cycle against the map and the table, for 1 to 32 columns and tiles of 1 to 1
 - **The map** is limited by the RAM: 246 bytes with the upper half (the arrays now use
   banks 8-15, FSR bit 7). A bigger picture would need another way: 16 x 12 is 192.
 - **The frame** has the same period as before; the kernel adds nothing to the wait.
+
+## 11. Result of step 4d: joystick, sound and SRAM
+
+Five more assembler functions (`src/kernel.cpp`, added by `library.cpp` to every
+program that includes `<xgs.h>`): `xgs_joystick`, `xgs_sound`, `xgs_sram_read`,
+`xgs_sram_write`, `xgs_sram_bank`; `xgs_note` is C on top of `xgs_sound`. The tests
+(`tests/hardware_test.cpp`) run them on the emulated SX52 with the sound port recorded
+(commands decoded like the BU8763 does) and the joystick word and the SRAM set from
+outside.
+
+- `xgs_init()` writes the direction registers (RA2 input, RC output, RD input) and the
+  idle levels of RA and RC. Writes to the direction registers need the MODE register
+  at `0xF`, so `mov m, #f` comes first.
+- **Joystick**: RA1 low then high starts the word, then 16 times RA0 high and low; after
+  each falling edge RA2 is the next bit (0 = pressed). The last five bits are kept and
+  turned around.
+- **Sound**: the 11 bits come out of a 16 bit rotation of address and data (shifted 5
+  up first), SDATA is set, SCLK pulsed; SSTB pulsed at the end.
+- **SRAM**: the emulator looks at the SRAM only when `setb`/`clrb` change a bit of RC
+  (a `mov rc, w` is not seen), so the routines use bit instructions for RC4, RC5 and
+  RC6, and `mov rc, w` only for the low four address bits while the chip is deselected.
+  The access is the moment RC6 goes low; RC6 high again clears the page register.
+- Parameters of assembler functions can be in the banks: the lines that name one get a
+  `@bank` marker, which the bank pass resolves (the routines do not use FSR).
+
