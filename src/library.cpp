@@ -3,6 +3,8 @@
 #include <sstream>
 #include "errors.h"
 #include "kernel.h"
+#include "lexer.h"
+#include "parser.h"
 
 using namespace std;
 
@@ -26,6 +28,45 @@ void addXgsLibrary(Program* program, int lines, int colour)
 	frameRegisters.push_back("n");
 	program->functions.push_back(assemblerFunction("xgs_init", xgsInitSource(), none));
 	program->functions.push_back(assemblerFunction("xgs_frame", xgsFrameSource(lines, colour), frameRegisters));
+}
+
+void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
+{
+	// the table of the tile graphics is the program's own
+	bool found = false;
+	for (size_t i = 0; i < program->globals.size(); i++)
+	{
+		const Stmt& declaration = *program->globals[i];
+		if (declaration.name != "xgs_tiles")
+			continue;
+		found = true;
+		if (declaration.arraySize != 256 || !declaration.isConst || declaration.type.size != 1)
+			throw CompileError(declaration.line, "xgs_tiles has to be declared as const uint8_t xgs_tiles[256]: one byte for every line of every tile, "
+				"in all 256 / XGS_TILE_LINES tiles");
+	}
+	if (!found)
+		throw CompileError(1, "the tile map needs the table of the tile graphics: const uint8_t xgs_tiles[256] = { ... } (one colour for every line of every tile)");
+
+	int shift = 0;
+	while ((1 << shift) < tileLines)
+		shift++;
+	ostringstream text;
+	text << "typedef unsigned char uint8_t;\n"
+		"uint8_t xgs_map[" << columns * rows << "];\n"
+		"void xgs_tile(uint8_t x, uint8_t y, uint8_t tile) { xgs_map[y * " << columns << " + x] = tile << " << shift << "; }\n"
+		"uint8_t xgs_get_tile(uint8_t x, uint8_t y) { return xgs_map[y * " << columns << " + x] >> " << shift << "; }\n";
+	Program library = parse(tokenize(text.str()));
+	for (size_t i = 0; i < library.globals.size(); i++)
+		program->globals.insert(program->globals.begin() + i, std::move(library.globals[i]));
+	for (size_t i = 0; i < library.functions.size(); i++)
+		program->functions.push_back(std::move(library.functions[i]));
+
+	vector<string> none;
+	vector<string> frameRegisters;
+	frameRegisters.push_back("s");
+	frameRegisters.push_back("r");
+	program->functions.push_back(assemblerFunction("xgs_init", xgsInitSource(), none));
+	program->functions.push_back(assemblerFunction("xgs_frame", xgsTileFrameSource(columns, rows, tileLines), frameRegisters));
 }
 
 static string trim(const string& text)

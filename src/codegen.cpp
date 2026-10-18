@@ -2324,6 +2324,10 @@ namespace
 				if (!function.parameterLabels[i].hi.empty())
 					names[function.parameters[i].name + ".hi"] = function.parameterLabels[i].hi;
 			}
+			if (function.assembly.find("{acc_hi}") != string::npos)
+				names["acc_hi"] = accHigh();
+			if (function.assembly.find("{acc_lo}") != string::npos)
+				names["acc_lo"] = accLow();
 			for (size_t i = 0; i < function.registers.size(); i++)
 			{
 				string label = newLabel("v_" + function.name + "_" + function.registers[i]);
@@ -3047,7 +3051,7 @@ namespace
 			for (size_t i = 0; i < blocks.size(); i++)
 			{
 				int cursor = blockBase[i];
-				if (cursor >= UPPER_FIRST)
+				if (cursor + blocks[i].bytes > UPPER_FIRST)
 					usesUpperRam = true;
 				(*addresses)[blocks[i].label] = cursor;
 				if (!blocks[i].high.empty())
@@ -3288,6 +3292,14 @@ namespace
 				out << a->first << " equ " << hexText(isArray ? a->second : registerOf(a->second)) << "\n";
 				if (addressTaken.count(a->first))
 					out << a->first << "_addr equ " << hexText(a->second) << "\n";
+			}
+			// the first address behind an array, for the library routines in assembler
+			for (size_t i = 0; i < allocatedBlocks.size(); i++)
+			{
+				const Block& block = allocatedBlocks[i];
+				map<string, int>::const_iterator a = addresses.find(block.label);
+				if (a != addresses.end() && arrayLabels.count(block.label))
+					out << block.label << "_end equ " << hexText(a->second + block.bytes) << "\n";
 			}
 			ostringstream body;
 			body << "        org fff\n"

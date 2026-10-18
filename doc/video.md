@@ -280,3 +280,28 @@ The picture was also checked with the `Video` class of xgsemu itself (a program 
 runs the hex file on `Cpu` with a real `Video`): 192 lines, drawn twice, in one colour,
 and the colour for `0xe6` is the same as the background of `starfield_01`. That check
 needs SDL, which `xgscc` does not use, so it is not part of the tests.
+
+## 10. Result of step 4c: the tile map
+
+`XGS_COLUMNS`, `XGS_ROWS` and `XGS_TILE_LINES` switch `xgs_frame()` to a picture of
+tiles (`xgsTileFrameSource` in `src/kernel.cpp`). The prefix of every line is the same
+as before (writes at 0, 120, 496, 544, 744 cycles), then the cells come from 872 on,
+`3600 / columns` cycles apart, and a last write to the blanking level ends the line
+(`columns + 6` writes per line). The tests record them and check each cell's value
+and cycle against the map and the table, for 1 to 32 columns and tiles of 1 to 16 lines.
+
+- **A cell** (13 cycles of work): `mov w, indf` (the map byte, tile number times tile
+  lines), `add w, s` (the line in the tile), `mov m, #page`, `iread` (4 cycles), `mov re,
+  w`, `inc fsr`, then a wait; `decsz`/`jmp` for the next cell. The table has 256 entries
+  and sits on one 256 word block, so its page goes to MODE and the offset is W.
+- **The end of a line** counts the line in the tile (`s`); at the end of the tile it
+  takes the row start (`r`) from FSR, which has walked over the row, and ends the frame
+  when `r` is the end of the map (`v_xgs_map_end`, an `equ` that the code generator now
+  writes for every array). All three paths (same row, next row, last line) take the
+  same number of cycles, so every line is 5080 cycles.
+- **Registers**: `s` and `r` are direct registers of the kernel, the counters use `acc_hi`
+  (waits) and `acc_lo` (cells); an assembler function can ask for `{acc_hi}`/`{acc_lo}`.
+  FSR points into the map, so bit 7 is cleared before the kernel returns.
+- **The map** is limited by the RAM: 246 bytes with the upper half (the arrays now use
+  banks 8-15, FSR bit 7). A bigger picture would need another way: 16 x 12 is 192.
+- **The frame** has the same period as before; the kernel adds nothing to the wait.

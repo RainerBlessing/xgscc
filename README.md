@@ -190,8 +190,38 @@ void main(void)
 does, as long as the game needs less than 65 000 cycles per frame and less than the time
 the picture leaves (336 000 cycles for 192 lines); if it takes longer, one frame is
 longer, the lines stay exact. `#define XGS_LINES n` (1 to 255) and `#define XGS_COLOR c`
-before the include change the picture; for now it is one colour, tiles come next.
-`examples/xgs_blank.c` is the smallest program.
+before the include change the picture (one colour). `examples/xgs_blank.c` is the
+smallest program.
+
+### Tiles
+
+With `XGS_COLUMNS`, `XGS_ROWS` or `XGS_TILE_LINES` defined the picture is a map of
+tiles:
+
+```c
+#include <stdint.h>
+#define XGS_COLUMNS 16          // 1 to 255 (the cells are 3600 / columns cycles wide)
+#define XGS_ROWS 12
+#define XGS_TILE_LINES 16       // a power of two: 1 to 128; rows * tile lines <= 255
+#include <xgs.h>
+
+// one byte for the video port per line of every tile: 256 / XGS_TILE_LINES tiles
+const uint8_t xgs_tiles[256] = { ... };
+
+void main(void) {
+    xgs_init();
+    xgs_tile(3, 2, 5);      // column 3, row 2 shows tile 5
+    for (;;) xgs_frame();
+}
+```
+
+The map is the array `xgs_map` (one byte per cell, columns times rows bytes, the tile
+number times `XGS_TILE_LINES`); `xgs_tile(x, y, tile)` writes it, `xgs_get_tile(x, y)`
+reads the number back. A cell is one write to the port per line: the kernel takes the
+byte at `xgs_tiles[tile * XGS_TILE_LINES + line]` with `iread` (13 cycles per cell,
+the rest of the cell is waiting), so the colour can change once per cell and line. The
+kernel takes `acc_hi`, `acc_lo` and two more of the direct registers.
+`examples/xgs_tiles.c` shows a moving pattern.
 
 The kernel is an assembler function: the compiler puts its text in the ROM as it is,
 without `page` instructions, on one page, and gives it two of the direct registers
@@ -208,7 +238,7 @@ the runtime routines and the tables in the ROM, how much of both is free, and th
 deepest nesting of calls against the 8 entries of the return stack:
 
 ```
-RAM: 24 of 118 bytes used, 94 free
+RAM: 24 of 246 bytes used, 222 free
   address  bytes  name
   0x0A         1  acc_hi (high byte of 16 bit results)
   0x13         1  score (low byte)

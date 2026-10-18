@@ -86,13 +86,32 @@ CompileResult compile(const string& source, const string& fileName)
 		{
 			long lines = 192;
 			long colour = 0xe6;
+			long columns = 16;
+			long rows = 12;
+			long tileLines = 16;
 			definedNumber(source, "XGS_LINES", &lines);
 			definedNumber(source, "XGS_COLOR", &colour);
+			bool tiles = definedNumber(source, "XGS_COLUMNS", &columns);
+			tiles = definedNumber(source, "XGS_ROWS", &rows) || tiles;
+			tiles = definedNumber(source, "XGS_TILE_LINES", &tileLines) || tiles;
 			if (lines < 1 || lines > 255)
 				throw CompileError(1, "XGS_LINES has to be a number from 1 to 255");
 			if (colour < 0 || colour > 255)
 				throw CompileError(1, "XGS_COLOR has to be a number from 0 to 255");
-			addXgsLibrary(&program, (int) lines, (int) colour);
+			if (tiles)
+			{
+				if (columns < 1 || columns > 255)
+					throw CompileError(1, "XGS_COLUMNS has to be a number from 1 to 255");
+				if (rows < 1 || rows > 255)
+					throw CompileError(1, "XGS_ROWS has to be a number from 1 to 255");
+				if (tileLines < 1 || tileLines > 128 || (tileLines & (tileLines - 1)) != 0)
+					throw CompileError(1, "XGS_TILE_LINES has to be a power of two from 1 to 128");
+				if (rows * tileLines > 255)
+					throw CompileError(1, "XGS_ROWS times XGS_TILE_LINES is " + to_string(rows * tileLines) + ": the picture has at most 255 lines");
+				addXgsTileLibrary(&program, (int) columns, (int) rows, (int) tileLines);
+			}
+			else
+				addXgsLibrary(&program, (int) lines, (int) colour);
 		}
 		// the runtime comes behind the program, only what is called gets into the ROM
 		Program runtime = parse(tokenize(runtimeSource()));

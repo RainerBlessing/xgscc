@@ -19,6 +19,8 @@ namespace
 	const int BACK_PORCH = 48;
 	const int BURST = 200;
 	const int AFTER_BURST = 128;
+	const int PICTURE_START = FRONT_PORCH + HSYNC + BACK_PORCH + BURST + AFTER_BURST;	// 872
+	const int TILE_CELL_WORK = 13;		// cycles of a cell that are not waiting
 	const int ACTIVE = XGS_LINE_CYCLES - (FRONT_PORCH + HSYNC + BACK_PORCH + BURST + AFTER_BURST);	// 4208
 
 	const int SYNC_LEVEL = 0xf0;
@@ -43,7 +45,13 @@ namespace
 	class Kernel
 	{
 	public:
-		Kernel() : labels(0) {}
+		// counter is the register of the delay loops and of the wait
+		explicit Kernel(const string& counter = "{a}") : counter(counter), labels(0) {}
+
+		const string& counterRegister() const
+		{
+			return counter;
+		}
 
 		string text()
 		{
@@ -85,9 +93,9 @@ namespace
 					rounds = 256;
 				string again = newLabel();
 				line("mov w, #" + hexText(rounds % 256));
-				line("mov {a}, w");
+				line("mov " + counter + ", w");
 				label(again);
-				line("decsz {a}");
+				line("decsz " + counter);
 				line("jmp " + again);
 				cycles -= rounds * 4;
 			}
@@ -104,6 +112,7 @@ namespace
 
 	private:
 		ostringstream out;
+		string counter;
 		int labels;
 
 		string newLabel()
@@ -111,6 +120,51 @@ namespace
 			return "xgs_d" + hexText(labels++);
 		}
 	};
+}
+
+namespace
+{
+	// The wait from the end of the last picture line to the start of the next frame.
+	void waitForFrame(Kernel& k, int lines)
+	{
+		const string r = k.counterRegister();
+	// The time from the end of the last picture line to the next vertical sync:
+	// the frame minus the sync, the lines and the clr of the RTCC.
+	int wait = XGS_FRAME_CYCLES - XGS_VSYNC_CYCLES - lines * XGS_LINE_CYCLES - 1;
+	int ticks = (wait - MARGIN) / 256;
+	if (ticks % 256 == 0)
+		ticks--;			// the low count must not be 0, there would be nothing to wait for
+	int fine = wait - ticks * 256 - POLL_LATENCY - AFTER_DETECTION;
+
+	// One register counts the wraps of the RTCC, then the ticks, then the rounds
+	// of the delay loops.
+	if (ticks / 256 > 0)
+	{
+		k.comment("wait: the high part of the ticks, in wraps of the RTCC");
+		k.line("mov w, #" + hexText(ticks / 256));
+		k.line("mov " + r + ", w");
+		k.label("xgs_wrap");
+		k.label("xgs_leave");
+		k.line("mov w, rtcc");
+		k.line("snb status.2");
+		k.line("jmp xgs_leave");			// while the RTCC is 0
+		k.label("xgs_reach");
+		k.line("mov w, rtcc");
+		k.line("sb status.2");
+		k.line("jmp xgs_reach");			// until it is 0 again: it has wrapped
+		k.line("decsz " + r);
+		k.line("jmp xgs_wrap");
+	}
+	k.comment("the low part of the ticks");
+	k.line("mov w, #" + hexText(ticks % 256));
+	k.line("mov " + r + ", w");
+	k.label("xgs_tick");
+	k.line("mov w, rtcc");
+	k.line("xor w, " + r);
+	k.line("sb status.2");
+	k.line("jmp xgs_tick");
+	k.delay(fine);
+	}
 }
 
 string xgsInitSource()
@@ -131,42 +185,7 @@ string xgsFrameSource(int lines, int colour)
 {
 	Kernel k;
 
-	// The time from the end of the last picture line to the next vertical sync:
-	// the frame minus the sync, the lines and the clr of the RTCC.
-	int wait = XGS_FRAME_CYCLES - XGS_VSYNC_CYCLES - lines * XGS_LINE_CYCLES - 1;
-	int ticks = (wait - MARGIN) / 256;
-	if (ticks % 256 == 0)
-		ticks--;			// the low count must not be 0, there would be nothing to wait for
-	int fine = wait - ticks * 256 - POLL_LATENCY - AFTER_DETECTION;
-
-	// One register, {a}, counts the wraps of the RTCC, then the ticks, then the rounds
-	// of the delay loops; {n} counts the lines.
-	if (ticks / 256 > 0)
-	{
-		k.comment("wait: the high part of the ticks, in wraps of the RTCC");
-		k.line("mov w, #" + hexText(ticks / 256));
-		k.line("mov {a}, w");
-		k.label("xgs_wrap");
-		k.label("xgs_leave");
-		k.line("mov w, rtcc");
-		k.line("snb status.2");
-		k.line("jmp xgs_leave");			// while the RTCC is 0
-		k.label("xgs_reach");
-		k.line("mov w, rtcc");
-		k.line("sb status.2");
-		k.line("jmp xgs_reach");			// until it is 0 again: it has wrapped
-		k.line("decsz {a}");
-		k.line("jmp xgs_wrap");
-	}
-	k.comment("the low part of the ticks");
-	k.line("mov w, #" + hexText(ticks % 256));
-	k.line("mov {a}, w");
-	k.label("xgs_tick");
-	k.line("mov w, rtcc");
-	k.line("xor w, {a}");
-	k.line("sb status.2");
-	k.line("jmp xgs_tick");
-	k.delay(fine);
+	waitForFrame(k, lines);
 
 	k.comment("the vertical sync");
 	k.write(SYNC_LEVEL);
@@ -196,6 +215,87 @@ string xgsFrameSource(int lines, int colour)
 	k.write(BLANKING_LEVEL);
 	k.line("clr rtcc");
 	k.line("retp");
+
+	return k.text();
+}
+
+string xgsTileFrameSource(int columns, int rows, int tileLines)
+{
+	const int lines = rows * tileLines;
+	const int cell = XGS_TILE_AREA / columns;		// cycles per cell
+	const int gap = cell - TILE_CELL_WORK;			// the rest of a cell is waiting
+	const int lineEnd = PICTURE_START + columns * cell;	// the blank write behind the last cell
+	const int housekeeping = XGS_LINE_CYCLES - 2 - lineEnd;	// cycles from there to the next "mov w, #f6; mov re, w"
+	Kernel k("{acc_hi}");
+
+	waitForFrame(k, lines);
+
+	k.comment("the vertical sync; {s} is the line in the tile, {r} the start of the row in the map");
+	k.write(SYNC_LEVEL);
+	k.line("clr {s}");
+	k.line("mov w, #v_xgs_map");
+	k.line("mov {r}, w");
+	k.delay(XGS_VSYNC_CYCLES - 3 - 2);
+
+	k.comment("a picture line: the prefix of every line, then one cell after the other");
+	k.label("xgs_line");
+	k.write(BLANKING_LEVEL);
+	k.line("mov w, {r}");
+	k.line("mov fsr, w");
+	k.line("mov w, #" + hexText(columns));
+	k.line("mov {acc_lo}, w");
+	k.delay(FRONT_PORCH - 2 - 4);
+	k.write(SYNC_LEVEL);
+	k.delay(HSYNC - 2);
+	k.write(BLANKING_LEVEL);
+	k.delay(BACK_PORCH - 2);
+	k.write(BURST_LEVEL);
+	k.delay(BURST - 2);
+	k.write(BLANKING_LEVEL);
+	k.delay(AFTER_BURST - 8);			// the first cell takes 8 cycles up to its write
+
+	k.comment("a cell: tile number plus the line in the tile is the address in the table");
+	k.label("xgs_cell");
+	k.line("mov w, indf");
+	k.line("add w, {s}");
+	k.line("mov m, #v_xgs_tiles_page");
+	k.line("iread");
+	k.line("mov re, w");
+	k.line("inc fsr");
+	k.delay(gap);
+	k.line("decsz {acc_lo}");
+	k.line("jmp xgs_cell");
+	// the last round ends 2 cycles after its decsz instead of 4: 8 cycles to make up
+	k.delay(cell - 1 - 2 - gap - 2);
+	k.write(BLANKING_LEVEL);
+
+	// Behind the last cell: next line of the tile, or the next row, or the end. The
+	// paths take as many cycles as the straight one, so that the next line starts on time.
+	k.comment("the end of the line");
+	k.line("inc {s}");
+	k.line("mov w, #" + hexText(tileLines));
+	k.line("xor w, {s}");
+	k.line("sb status.2");
+	k.line("jmp xgs_same_row");
+	k.line("clr {s}");
+	k.line("mov w, fsr");
+	k.line("mov {r}, w");
+	k.line("mov w, #v_xgs_map_end");
+	k.line("xor w, {r}");
+	k.line("sb status.2");
+	k.line("jmp xgs_next_row");
+	k.delay(housekeeping - 12);
+	k.write(BLANKING_LEVEL);
+	k.line("clrb fsr.7");
+	k.line("clr rtcc");
+	k.line("retp");
+
+	k.label("xgs_same_row");
+	k.delay(housekeeping - 7 - 3);
+	k.line("jmp xgs_line");
+	k.label("xgs_next_row");
+	k.delay(housekeeping - 17);
+	k.line("jmp xgs_line");
 
 	return k.text();
 }

@@ -10,6 +10,7 @@
 
 const int XGS_LINE_CYCLES = 5080;       // 63.5 us at 80 MHz
 const int XGS_VSYNC_CYCLES = 19283;     // the long sync that starts a frame
+const int XGS_TILE_AREA = 3600;			// cycles for the cells of a line
 const int XGS_FRAME_CYCLES = 1330956;   // 60.1 Hz, like the example programs
 
 /**
@@ -33,5 +34,14 @@ std::string xgsInitSource();
  * colour is the byte for RE: luminance in the low nibble, chroma in the high one.
  */
 std::string xgsFrameSource(int lines, int colour);
+
+/**
+ * xgs_frame() for the tile map: a picture of columns x rows tiles, every tile
+ * tileLines lines high. The map is the array xgs_map (one byte per tile: the
+ * tile number times tileLines), the graphics are the table xgs_tiles of 256 bytes
+ * (one colour for every line of a tile). {s}, {r}, {acc_hi} and {acc_lo} are the
+ * registers. Every cell is XGS_TILE_AREA / columns cycles wide.
+ */
+std::string xgsTileFrameSource(int columns, int rows, int tileLines);
 
 #endif /*KERNEL_H_*/

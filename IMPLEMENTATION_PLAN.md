@@ -221,8 +221,15 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    C program makes a picture that the `Video` of xgsemu draws. `XGS_LINES` and
    `XGS_COLOR` come from `#define`.
    Status: Complete
-3. **4c** the tile map kernel and `xgs.h`.
-   Status: Not Started
+3. **4c** the tile map kernel and `xgs.h`. Decision: a map of one byte per tile in
+   RAM, the graphics in a 256 byte ROM table read with `iread` (colour per line of a
+   tile); the picture engine of this stage does tiles only (no sprites, they come in
+   4e). To make room for the map the arrays use the upper half of the RAM (banks 8-15,
+   FSR bit 7), 246 bytes in all. `#define XGS_COLUMNS/XGS_ROWS/XGS_TILE_LINES`,
+   `xgs_tile()`, `xgs_get_tile()`, the array `xgs_map`. Found on the way: autopage
+   of the assembler set a stale page when insertions moved a label (fixed, tested in
+   xgsemu); a timer test of the CPU read ROM that was never programmed.
+   Status: Complete
 4. **4d** joystick, sound and SRAM as C functions.
    Status: Not Started
 5. **4e** sprites, and Pong in C.
@@ -237,7 +244,7 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: In Progress (4c next)
+**Status**: In Progress (4d next)
 
 ## Stage 5: size, speed and use
 

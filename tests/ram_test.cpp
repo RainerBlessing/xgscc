@@ -283,3 +283,12 @@ TEST(RamTest, NoClearOfFsrBitSevenWithoutTheUpperHalf) {
     EXPECT_EQ(std::string::npos, run.compiled.assembly.find("clrb fsr.7\n        @")) ;
     EXPECT_EQ(1, run.value("x"));
 }
+
+TEST(RamTest, AnArrayThatReachesIntoTheUpperHalfClearsBitSevenOfFsr) {
+    // 150 bytes: it starts at 0x69 in the lower half, only its end is in the upper half
+    ProgramRun run = runProgram(source("uint8_t a[150]; uint8_t x; uint8_t y; uint8_t z;",
+        "x = 1; a[140] = 5; y = 2; a[3] = 7; z = x + y;"));
+    ASSERT_TRUE(run.compiled.ok) << run.compiled.error;
+    EXPECT_EQ(3, run.value("z"));
+    EXPECT_EQ(5, run.ram[run.compiled.variables.at("a") + 140]);
+}

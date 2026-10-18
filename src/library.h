@@ -16,6 +16,14 @@
  */
 void addXgsLibrary(Program* program, int lines, int colour);
 
+/**
+ * The same with a tile map instead of one colour: xgs_frame() draws columns x rows
+ * tiles of tileLines lines each (#define XGS_COLUMNS, XGS_ROWS, XGS_TILE_LINES), from
+ * the array xgs_map and the table xgs_tiles of the program. Also adds xgs_tile() and
+ * xgs_get_tile(). Throws CompileError if the table is missing or has the wrong size.
+ */
+void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines);
+
 /** Whether the source has the line #include <name> or #include "name". */
 bool includes(const std::string& source, const std::string& name);
 
