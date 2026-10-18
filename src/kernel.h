@@ -10,7 +10,7 @@
 
 const int XGS_LINE_CYCLES = 5080;       // 63.5 us at 80 MHz
 const int XGS_VSYNC_CYCLES = 19283;     // the long sync that starts a frame
-const int XGS_TILE_AREA = 3600;			// cycles for the cells of a line
+const int XGS_TILE_AREA = 4180;			// cycles for the cells of a line: the picture (4208) less what the end of the line needs
 const int XGS_FRAME_CYCLES = 1330956;   // 60.1 Hz, like the example programs
 
 /**

@@ -116,7 +116,7 @@ void checkPicture(const Result& r, int columns, int rows, int tileLines) {
     std::vector<size_t> frames = frameStarts(r.events);
     ASSERT_GE(frames.size(), 5u);
     const int tiles = 256 / tileLines;
-    const int cell = 3600 / columns;
+    const int cell = XGS_TILE_AREA / columns;
     const int lines = rows * tileLines;
     size_t a = frames[2];
     const size_t perLine = columns + 6;
