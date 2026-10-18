@@ -271,7 +271,7 @@ reads the number back. A cell is one write to the port per line: the kernel take
 byte at `xgs_tiles[tile * XGS_TILE_LINES + line]` with `iread` (13 cycles per cell,
 the rest of the cell is waiting), so the colour can change once per cell and line. The
 kernel takes `acc_hi`, `acc_lo` and two more of the direct registers.
-`examples/xgs_tiles.c` shows a moving pattern, `examples/pong.c` is a complete game: Pong on
+`examples/xgs_tiles.c` shows a moving pattern, `examples/pong.c` is a complete game: Pong with a title, started with fire, on
 the tile map with the joystick, a computer opponent, sound and a score.
 
 The kernel is an assembler function: the compiler puts its text in the ROM as it is,

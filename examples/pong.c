@@ -1,6 +1,7 @@
-// Pong on the tile map: you play the left paddle with the joystick (up, down), the
-// computer the right one. The score is the number of blocks in the top row. A point
-// to a side when the other one misses; at 8 points the score starts again.
+// Pong on the tile map: the fire button starts the game. You play the left paddle with
+// the joystick (up, down), the computer the right one. The score is the number of
+// blocks in the top row. A point to a side when the other one misses; at 8 points the
+// game is over and the title comes back.
 #include <stdint.h>
 #define XGS_COLUMNS 16
 #define XGS_ROWS 12
@@ -11,6 +12,13 @@
 #define BLOCK 1
 #define WALL 2
 #define NET 3
+#define PADDLE_TILE 4
+#define BALL 5
+#define LETTER 6
+
+#define FIRE 0x10
+#define LOCKOUT 60          // frames after a game in which fire does nothing
+#define WIN 8
 
 #define TOP 1               // the first and the last row of the court
 #define BOTTOM 10
@@ -26,7 +34,21 @@ const uint8_t xgs_tiles[256] = {
     // 2 wall: blue
     0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a, 0x8a,
     // 3 net: a short white dash
-    0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xff, 0xff, 0xff, 0xff, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6
+    0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xff, 0xff, 0xff, 0xff, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6, 0xf6,
+    // 4 paddle: magenta, brighter towards the bottom
+    0xa8, 0xa8, 0xa8, 0xa9, 0xa9, 0xa9, 0xaa, 0xaa, 0xaa, 0xab, 0xab, 0xab, 0xac, 0xac, 0xac, 0xad,
+    // 5 ball: yellow
+    0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c, 0x0c,
+    // 6 title letter: from yellow to magenta
+    0x0c, 0x0c, 0x1c, 0x2c, 0x2c, 0x3c, 0x4c, 0x4c, 0x5c, 0x6c, 0x6c, 0x7c, 0x8c, 0x8c, 0x9c, 0xac
+};
+
+// the letters of the title: 3 x 5 cells each, one row per byte (bit 2 is the left cell)
+const uint8_t letters[20] = {
+    7, 5, 7, 4, 4,          // P
+    7, 5, 5, 5, 7,          // O
+    7, 5, 5, 5, 5,          // N (as a small n)
+    7, 4, 5, 5, 7           // G
 };
 
 uint8_t left_y = 4;         // the top cell of a paddle
@@ -39,6 +61,9 @@ uint8_t score_left;
 uint8_t score_right;
 uint8_t frame;
 uint8_t joystick;
+uint8_t playing;            // 0: the title is shown
+uint8_t lockout;
+uint8_t games;              // games that were played to the end
 
 // what is in a cell without the ball: the net in the middle, else nothing
 void clear_cell(uint8_t x, uint8_t y) {
@@ -79,8 +104,8 @@ void court(void) {
         clear_cell(8, y);
     }
     show_score();
-    paddle(0, left_y, BLOCK);
-    paddle(LAST_COLUMN, right_y, BLOCK);
+    paddle(0, left_y, PADDLE_TILE);
+    paddle(LAST_COLUMN, right_y, PADDLE_TILE);
 }
 
 void serve(uint8_t to_the_right) {
@@ -88,7 +113,7 @@ void serve(uint8_t to_the_right) {
     ball_x = 8;
     ball_y = 5;
     ball_right = to_the_right;
-    xgs_tile(ball_x, ball_y, BLOCK);
+    xgs_tile(ball_x, ball_y, BALL);
 }
 
 void point(uint8_t left_scores) {
@@ -98,11 +123,11 @@ void point(uint8_t left_scores) {
     } else {
         score_right++;
     }
-    if (score_left == 8 || score_right == 8) {
-        score_left = 0;
-        score_right = 0;
-    }
     show_score();
+    if (score_left == WIN || score_right == WIN) {
+        game_over();
+        return;
+    }
     serve(left_scores);
 }
 
@@ -157,7 +182,85 @@ void move_ball(void) {
     } else {
         ball_x--;
     }
-    xgs_tile(ball_x, ball_y, BLOCK);
+    xgs_tile(ball_x, ball_y, BALL);
+}
+
+void clear_map(void) {
+    for (uint8_t i = 0; i < XGS_COLUMNS * XGS_ROWS; i++) {
+        xgs_map[i] = 0;
+    }
+}
+
+// one letter of the title with its left column at x, from row 3 down
+void letter(uint8_t x, uint8_t which) {
+    for (uint8_t row = 0; row < 5; row++) {
+        uint8_t bits = letters[which * 5 + row];
+        for (uint8_t column = 0; column < 3; column++) {
+            if (bits & (4 >> column)) {
+                xgs_tile(x + column, 3 + row, LETTER);
+            }
+        }
+    }
+}
+
+void title(void) {
+    clear_map();
+    for (uint8_t which = 0; which < 4; which++) {
+        letter(1 + which * 4, which);
+    }
+    xgs_tile(8, 10, BALL);
+    playing = 0;
+}
+
+void new_game(void) {
+    clear_map();
+    score_left = 0;
+    score_right = 0;
+    left_y = 4;
+    right_y = 4;
+    ball_x = 8;
+    ball_y = 5;
+    court();
+    xgs_tile(ball_x, ball_y, BALL);
+    playing = 1;
+    xgs_note(0, 36);
+}
+
+void game_over(void) {
+    games++;
+    xgs_note(0, 6);
+    lockout = LOCKOUT;
+    title();
+}
+
+void play(void) {
+    if ((frame & 3) == 0) {
+        if ((joystick & 1) && left_y > TOP) {
+            xgs_tile(0, left_y + PADDLE - 1, EMPTY);
+            left_y--;
+            paddle(0, left_y, PADDLE_TILE);
+        }
+        if ((joystick & 2) && left_y + PADDLE <= BOTTOM) {
+            xgs_tile(0, left_y, EMPTY);
+            left_y++;
+            paddle(0, left_y, PADDLE_TILE);
+        }
+    }
+    if ((frame & 7) == 0) {         // the computer is slower than the ball
+        if (right_y + 1 < ball_y && right_y + PADDLE <= BOTTOM) {
+            xgs_tile(LAST_COLUMN, right_y, EMPTY);
+            right_y++;
+            paddle(LAST_COLUMN, right_y, PADDLE_TILE);
+        }
+        if (right_y + 1 > ball_y && right_y > TOP) {
+            xgs_tile(LAST_COLUMN, right_y + PADDLE - 1, EMPTY);
+            right_y--;
+            paddle(LAST_COLUMN, right_y, PADDLE_TILE);
+        }
+    }
+    if ((frame & 3) == 1) {
+        move_ball();
+    }
 }
 
 void main(void) {
@@ -165,40 +268,26 @@ void main(void) {
     xgs_sound(0, 0x80);         // channel 1 on
     xgs_sound(1, 0x10);         // square wave with envelope
     xgs_sound(3, 0x00);         // loudest
-    court();
-    xgs_tile(ball_x, ball_y, BLOCK);
+    title();
 
     for (;;) {
         xgs_frame();
         frame++;
         joystick = xgs_joystick();
-
-        if ((frame & 3) == 0) {
-            if ((joystick & 1) && left_y > TOP) {
-                xgs_tile(0, left_y + PADDLE - 1, EMPTY);
-                left_y--;
-                paddle(0, left_y, BLOCK);
+        if (playing) {
+            play();
+        } else {
+            if (lockout) {
+                lockout--;
+            } else if (joystick & FIRE) {
+                new_game();
             }
-            if ((joystick & 2) && left_y + PADDLE <= BOTTOM) {
-                paddle(0, left_y, EMPTY);
-                left_y++;
-                paddle(0, left_y, BLOCK);
+            if ((frame & 31) == 0) {            // the ball under the title blinks
+                xgs_tile(8, 10, EMPTY);
             }
-        }
-        if ((frame & 7) == 0) {         // the computer is slower than the ball
-            if (right_y + 1 < ball_y && right_y + PADDLE <= BOTTOM) {
-                paddle(LAST_COLUMN, right_y, EMPTY);
-                right_y++;
-                paddle(LAST_COLUMN, right_y, BLOCK);
+            if ((frame & 31) == 16) {
+                xgs_tile(8, 10, BALL);
             }
-            if (right_y + 1 > ball_y && right_y > TOP) {
-                xgs_tile(LAST_COLUMN, right_y + PADDLE - 1, EMPTY);
-                right_y--;
-                paddle(LAST_COLUMN, right_y, BLOCK);
-            }
-        }
-        if ((frame & 3) == 1) {
-            move_ball();
         }
     }
 }
