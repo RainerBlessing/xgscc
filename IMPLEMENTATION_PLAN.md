@@ -215,7 +215,12 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    rules for sync, burst and lines.
    Status: Complete
 2. **4b** assembler functions in the compiler, the kernel of 4a is the first user.
-   Status: Not Started
+   `#include <xgs.h>` adds `xgs_init()` and `xgs_frame()`; an assembler function is a
+   `Function` with `assembly` text and `registers` that are pinned to the direct
+   registers; its text is not touched, no `autopage`, and it must stay on one page. A
+   C program makes a picture that the `Video` of xgsemu draws. `XGS_LINES` and
+   `XGS_COLOR` come from `#define`.
+   Status: Complete
 3. **4c** the tile map kernel and `xgs.h`.
    Status: Not Started
 4. **4d** joystick, sound and SRAM as C functions.
@@ -232,7 +237,7 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: In Progress (4b next)
+**Status**: In Progress (4c next)
 
 ## Stage 5: size, speed and use
 

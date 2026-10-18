@@ -100,6 +100,13 @@ TEST_F(CliTest, MapWithTheAssemblerOutputToo) {
     EXPECT_NE(std::string::npos, readFile(dir + "/c.map").find("counter"));
 }
 
+TEST_F(CliTest, TheVideoExampleCompiles) {
+    Result result = xgscc("--map " + quoted(EXAMPLES_DIR "/xgs_blank.c") + " -o " + quoted(dir + "/blank.hex"));
+    EXPECT_EQ(0, result.exitCode) << result.output;
+    EXPECT_NE(std::string::npos, readFile(dir + "/blank.map").find("xgs_frame")) << readFile(dir + "/blank.map");
+    EXPECT_NE(std::string::npos, readFile(dir + "/blank.hex").find(":00000001FF"));
+}
+
 TEST_F(CliTest, ErrorsNameFileAndLineAndFail) {
     writeFile(dir + "/bad.c", "uint8_t a;\nvoid main(void) {\n  a = b;\n}\n");
     Result result = xgscc(quoted(dir + "/bad.c") + " -o " + quoted(dir + "/bad.hex"));

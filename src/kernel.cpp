@@ -85,9 +85,9 @@ namespace
 					rounds = 256;
 				string again = newLabel();
 				line("mov w, #" + hexText(rounds % 256));
-				line("mov xgs_count, w");
+				line("mov {a}, w");
 				label(again);
-				line("decsz xgs_count");
+				line("decsz {a}");
 				line("jmp " + again);
 				cycles -= rounds * 4;
 			}
@@ -113,11 +113,9 @@ namespace
 	};
 }
 
-string xgsKernelSource(int lines, int colour)
+string xgsInitSource()
 {
 	Kernel k;
-
-	k.label("xgs_init");
 	k.line("mov w, #0");
 	k.line("mov !re, w");				// all of RE are outputs
 	k.line("mov w, #7");
@@ -126,6 +124,12 @@ string xgsKernelSource(int lines, int colour)
 	k.line("mov re, w");
 	k.line("clr rtcc");
 	k.line("retp");
+	return k.text();
+}
+
+string xgsFrameSource(int lines, int colour)
+{
+	Kernel k;
 
 	// The time from the end of the last picture line to the next vertical sync:
 	// the frame minus the sync, the lines and the clr of the RTCC.
@@ -135,12 +139,13 @@ string xgsKernelSource(int lines, int colour)
 		ticks--;			// the low count must not be 0, there would be nothing to wait for
 	int fine = wait - ticks * 256 - POLL_LATENCY - AFTER_DETECTION;
 
-	k.label("xgs_frame");
+	// One register, {a}, counts the wraps of the RTCC, then the ticks, then the rounds
+	// of the delay loops; {n} counts the lines.
 	if (ticks / 256 > 0)
 	{
 		k.comment("wait: the high part of the ticks, in wraps of the RTCC");
 		k.line("mov w, #" + hexText(ticks / 256));
-		k.line("mov xgs_hi, w");
+		k.line("mov {a}, w");
 		k.label("xgs_wrap");
 		k.label("xgs_leave");
 		k.line("mov w, rtcc");
@@ -150,15 +155,15 @@ string xgsKernelSource(int lines, int colour)
 		k.line("mov w, rtcc");
 		k.line("sb status.2");
 		k.line("jmp xgs_reach");			// until it is 0 again: it has wrapped
-		k.line("decsz xgs_hi");
+		k.line("decsz {a}");
 		k.line("jmp xgs_wrap");
 	}
 	k.comment("the low part of the ticks");
 	k.line("mov w, #" + hexText(ticks % 256));
-	k.line("mov xgs_lo, w");
+	k.line("mov {a}, w");
 	k.label("xgs_tick");
 	k.line("mov w, rtcc");
-	k.line("xor w, xgs_lo");
+	k.line("xor w, {a}");
 	k.line("sb status.2");
 	k.line("jmp xgs_tick");
 	k.delay(fine);
@@ -166,7 +171,7 @@ string xgsKernelSource(int lines, int colour)
 	k.comment("the vertical sync");
 	k.write(SYNC_LEVEL);
 	k.line("mov w, #" + hexText(lines));
-	k.line("mov xgs_n, w");
+	k.line("mov {n}, w");
 	k.delay(XGS_VSYNC_CYCLES - 2 - 2);
 
 	k.comment("a picture line: the gaps between the writes add up to 5080 cycles");
@@ -183,7 +188,7 @@ string xgsKernelSource(int lines, int colour)
 	k.delay(AFTER_BURST - 2);
 	k.write(colour);
 	k.delay(ACTIVE - 2 - 4);			// 4 for decsz and jmp
-	k.line("decsz xgs_n");
+	k.line("decsz {n}");
 	k.line("jmp xgs_line");
 	k.comment("the last line: the same 6 cycles as jmp and the write of the next line");
 	k.line("nop");
@@ -192,5 +197,5 @@ string xgsKernelSource(int lines, int colour)
 	k.line("clr rtcc");
 	k.line("retp");
 
-	return "        firsthalf\n" + k.text();
+	return k.text();
 }

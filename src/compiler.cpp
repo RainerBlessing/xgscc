@@ -6,6 +6,7 @@
 #include "codegen.h"
 #include "errors.h"
 #include "lexer.h"
+#include "library.h"
 #include "parser.h"
 #include "runtime.h"
 
@@ -54,6 +55,18 @@ static void buildMap(const CodeInfo& info, const map<string, int>& labels, Compi
 			if (result.rom[address] != 0xfff)
 				words++;
 		}
+		if (code[i].second->kind == "assembler")
+		{
+			// timed to the cycle: it has to be callable (first half of a page) and on one page
+			int last = code[i].first;
+			for (int address = code[i].first; address < end; address++)
+			{
+				if (result.rom[address] != 0xfff)
+					last = address;
+			}
+			if (code[i].first % 512 >= 256 || code[i].first / 512 != last / 512)
+				throw CompileError(0, "the assembler routine " + code[i].second->name + " does not fit on one page of the ROM");
+		}
 		RomEntry entry = { code[i].first, words, code[i].second->name, code[i].second->kind };
 		map.rom.push_back(entry);
 	}
@@ -69,6 +82,18 @@ CompileResult compile(const string& source, const string& fileName)
 	try
 	{
 		Program program = parse(tokenize(source));
+		if (includes(source, "xgs.h"))
+		{
+			long lines = 192;
+			long colour = 0xe6;
+			definedNumber(source, "XGS_LINES", &lines);
+			definedNumber(source, "XGS_COLOR", &colour);
+			if (lines < 1 || lines > 255)
+				throw CompileError(1, "XGS_LINES has to be a number from 1 to 255");
+			if (colour < 0 || colour > 255)
+				throw CompileError(1, "XGS_COLOR has to be a number from 0 to 255");
+			addXgsLibrary(&program, (int) lines, (int) colour);
+		}
 		// the runtime comes behind the program, only what is called gets into the ROM
 		Program runtime = parse(tokenize(runtimeSource()));
 		for (size_t i = 0; i < runtime.functions.size(); i++)

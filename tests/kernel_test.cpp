@@ -34,7 +34,7 @@ std::string hex(int value) {
 // a delay in between that stands for the C code of the game.
 std::string program(int lines, int colour, int updateLoops) {
     std::string text =
-        "xgs_count equ 0a\nxgs_n equ 0b\nxgs_hi equ 0c\nxgs_lo equ 0d\nupdate_a equ 0e\nupdate_b equ 0f\n"
+        "xgs_a equ 0a\nxgs_n equ 0b\nupdate_a equ 0e\nupdate_b equ 0f\n"
         "        org fff\n        jmp start\n        org 0\n"
         "start:\n        call xgs_init\n"
         "frames:\n        call xgs_frame\n";
@@ -45,7 +45,15 @@ std::string program(int lines, int colour, int updateLoops) {
                 "spend:\n        decsz update_a\n        jmp spend\n        decsz update_b\n        jmp spend\n";
     }
     text += "        jmp frames\n";
-    return text + xgsKernelSource(lines, colour);
+    // the registers of the kernel are named {a} and {n} in its text
+    std::string kernel = "xgs_init:\n" + xgsInitSource() + "xgs_frame:\n" + xgsFrameSource(lines, colour);
+    for (const char* name : { "a", "n" }) {
+        std::string placeholder = std::string("{") + name + "}";
+        for (size_t at = kernel.find(placeholder); at != std::string::npos; at = kernel.find(placeholder, at)) {
+            kernel.replace(at, placeholder.size(), std::string("xgs_") + name);
+        }
+    }
+    return text + "        firsthalf\n" + kernel;
 }
 
 struct Recording {
@@ -205,7 +213,7 @@ TEST(KernelTest, ColourOfThePictureIsTheRequestedOne) {
 
 TEST(KernelTest, NoPageInstructionsAndNoUnknownCycles) {
     // the kernel is timed to the cycle: nothing may be inserted into it
-    std::string text = xgsKernelSource(100, 0xe6);
+    std::string text = xgsInitSource() + xgsFrameSource(100, 0xe6);
     EXPECT_EQ(std::string::npos, text.find("autopage"));
     EXPECT_EQ(std::string::npos, text.find("page "));
 }

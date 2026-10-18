@@ -47,11 +47,11 @@ string mapText(const MemoryMap& map, const string& fileName)
 	for (size_t i = 0; i < map.rom.size(); i++)
 		romUsed += map.rom[i].words;
 	out << "\nROM: " << romUsed << " of " << ROM_WORDS << " words used, " << ROM_WORDS - romUsed << " free\n";
-	out << "  address  words  kind      name\n";
+	out << "  address  words  kind       name\n";
 	for (size_t i = 0; i < map.rom.size(); i++)
 	{
 		const RomEntry& entry = map.rom[i];
-		out << "  " << pad(hex(entry.address, 3), 7) << right(entry.words, 7) << "  " << pad(entry.kind, 8) << "  " << entry.name << "\n";
+		out << "  " << pad(hex(entry.address, 3), 7) << right(entry.words, 7) << "  " << pad(entry.kind, 9) << "  " << entry.name << "\n";
 	}
 
 	out << "\ncall depth " << map.callDepth << " of " << RETURN_STACK << " (the return stack holds " << RETURN_STACK << " entries)\n";

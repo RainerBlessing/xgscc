@@ -123,6 +123,8 @@ namespace
 		Type returnType;
 		vector<Parameter> parameters;
 		const Stmt* body;
+		string assembly;		// a function written in assembler: its text
+		vector<string> registers;	// and the names of its registers
 		bool defined;
 		string entry;		// label of the first instruction
 		string exit;		// label of the return
@@ -301,6 +303,7 @@ namespace
 		vector<Block> globalBlocks;
 		vector<Table> globalTables;
 		set<string> arrayLabels;		// the addresses of arrays are no registers
+		set<string> pinned;			// labels that have to be direct registers
 		Block pendingBlock;			// the block of the struct variable that was declared last
 		vector<StructDefinition> structDefinitions;
 		map<string, map<string, Variable> > structMembers;		// label of a struct variable -> its members
@@ -328,6 +331,8 @@ namespace
 					throw CompileError(function.line, "function '" + function.name + "' is defined twice");
 				info.defined = true;
 				info.body = function.body.get();
+				info.assembly = function.assembly;
+				info.registers = function.registers;
 				info.line = function.line;
 				info.parameters = function.parameters;
 				definitionOrder.push_back(function.name);
@@ -2300,8 +2305,62 @@ namespace
 
 		// statements
 
+		// A function written in assembler: the text as it is, without autopage so that
+		// nothing is inserted, with its registers pinned to the direct registers.
+		void generateAssembler(FunctionInfo& function)
+		{
+			current = &function;
+			ensureParameterLabels(function);
+			map<string, string> names;
+			for (size_t i = 0; i < function.parameters.size(); i++)
+			{
+				names[function.parameters[i].name] = function.parameterLabels[i].lo;
+				if (!function.parameterLabels[i].hi.empty())
+					names[function.parameters[i].name + ".hi"] = function.parameterLabels[i].hi;
+			}
+			for (size_t i = 0; i < function.registers.size(); i++)
+			{
+				string label = newLabel("v_" + function.name + "_" + function.registers[i]);
+				describe(label, function.name + "." + function.registers[i] + " (register of the assembler routine)");
+				function.localLabels.push_back(label);
+				weights[label] += 1 << 20;
+				pinned.insert(label);
+				names[function.registers[i]] = label;
+			}
+			string text;
+			for (size_t at = 0; at < function.assembly.size();)
+			{
+				if (function.assembly[at] != '{')
+				{
+					text += function.assembly[at++];
+					continue;
+				}
+				size_t end = function.assembly.find('}', at);
+				string name = end == string::npos ? "" : function.assembly.substr(at + 1, end - at - 1);
+				if (!names.count(name))
+					throw CompileError(function.line, "the assembler routine " + function.name + " uses {" + name + "}, which is no parameter or register");
+				text += names[name];
+				at = end + 1;
+			}
+			function.code << "        autopage off\n" << function.entry << ":\n";
+			istringstream lines(text);
+			string line;
+			while (getline(lines, line))
+			{
+				bool isLabel = !line.empty() && line[line.size() - 1] == ':' && line[0] != ' ';
+				function.code << (isLabel ? "" : "        ") << line << "\n";
+			}
+			function.code << "        autopage on\n";
+			current = NULL;
+		}
+
 		void generateFunction(FunctionInfo& function)
 		{
+			if (!function.assembly.empty())
+			{
+				generateAssembler(function);
+				return;
+			}
 			current = &function;
 			temporariesInUse = 0;
 			loopDepth = 0;
@@ -2988,7 +3047,12 @@ namespace
 			{
 				const vector<string>& labels = places[byUse[rank].second];
 				for (size_t l = 0; l < labels.size(); l++)
+				{
 					(*addresses)[labels[l]] = addressesInOrder[rank];
+					if (pinned.count(labels[l]) && addressesInOrder[rank] >= BANKED_FIRST)
+						throw CompileError(mainFunction->line, "there are not enough direct registers for " + describeLabel(labels[l]) +
+							": the six registers 0x0A-0x0F are taken by the registers of assembler routines and acc_hi and acc_lo");
+				}
 			}
 		}
 
@@ -3113,7 +3177,8 @@ namespace
 				const FunctionInfo& function = functions.at(definitionOrder[i]);
 				if (&function == mainFunction || find(reachable.begin(), reachable.end(), function.name) == reachable.end())
 					continue;
-				CodeSymbol symbol = { function.entry, function.name, function.name.compare(0, 2, "__") == 0 ? "runtime" : "function", 0 };
+				string kind = !function.assembly.empty() ? "assembler" : function.name.compare(0, 2, "__") == 0 ? "runtime" : "function";
+				CodeSymbol symbol = { function.entry, function.name, kind, 0 };
 				symbols.push_back(symbol);
 			}
 			vector<Table> tables = reachableTables();

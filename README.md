@@ -159,6 +159,39 @@ The start code (`org fff`, `jmp _start`) initializes the globals and the static
 variables and falls into the code of `main`. When `main` ends the
 program loops on a `jmp` to itself.
 
+## The video
+
+The picture of the XGS ME is a signal that the program writes to port RE, to the clock
+cycle (`doc/video.md` explains it). A C program cannot time that, so the library has a
+kernel in assembler:
+
+```c
+#include <stdint.h>
+#include <xgs.h>            // only with this line the library is part of the program
+
+void main(void)
+{
+    xgs_init();             // once
+    for (;;) {
+        xgs_frame();        // waits for the end of the frame, then 192 lines of picture
+        // the game runs here, until the next xgs_frame()
+    }
+}
+```
+
+`xgs_frame()` keeps the frame period at 1 330 956 cycles (60.1 Hz) whatever the game
+does, as long as the game needs less than 65 000 cycles per frame and less than the time
+the picture leaves (336 000 cycles for 192 lines); if it takes longer, one frame is
+longer, the lines stay exact. `#define XGS_LINES n` (1 to 255) and `#define XGS_COLOR c`
+before the include change the picture; for now it is one colour, tiles come next.
+`examples/xgs_blank.c` is the smallest program.
+
+The kernel is an assembler function: the compiler puts its text in the ROM as it is,
+without `page` instructions, on one page, and gives it two of the direct registers
+(`0x0A-0x0F`), because a `bank` in the middle of it would change the timing. With the
+two registers of `acc_hi` and `acc_lo` that leaves two direct registers for fast
+variables.
+
 ## The map
 
 `--map` writes a text file next to the output (`game.hex` gives `game.map`) with the

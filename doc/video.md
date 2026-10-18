@@ -264,3 +264,19 @@ recording every write to RE.
 - **Calling it**: `call xgs_frame` and `call xgs_init`; they end with `retp`.
   They use four registers, `xgs_count`, `xgs_n`, `xgs_hi`, `xgs_lo`, that the caller
   defines. How C gets to call them is step 4b.
+
+## 9. Result of step 4b: the kernel is called from C
+
+`#include <xgs.h>` adds `xgs_init()` and `xgs_frame()` to the program. They are
+**assembler functions** (`Function::assembly`): the code generator writes their text
+into the output as it is, between `autopage off` and `autopage on`, gives the registers
+that they ask for (`{a}`, `{n}`) the direct registers 0x0A to 0x0F and checks after
+the assembly that each of them is on one page and callable (first half of a page).
+The tests of `tests/xgs_test.cpp` run C programs on the emulated SX52 and check lines,
+frame period and the game that runs once per frame; the kernel is called from another
+page, too.
+
+The picture was also checked with the `Video` class of xgsemu itself (a program that
+runs the hex file on `Cpu` with a real `Video`): 192 lines, drawn twice, in one colour,
+and the colour for `0xe6` is the same as the background of `starfield_01`. That check
+needs SDL, which `xgscc` does not use, so it is not part of the tests.

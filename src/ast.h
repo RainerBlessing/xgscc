@@ -110,6 +110,12 @@ struct Function
 	Type returnType;	// if it returns a value
 	std::vector<Parameter> parameters;
 	StmtPtr body;		// a BLOCK, empty for a prototype
+	// A function written in assembler (made by the library, never by the parser): the
+	// text goes into the program as it is. {name} in it is the register of a parameter
+	// or of one of `registers`, which are variables of the function that have to sit in
+	// the direct registers. It ends with retp itself.
+	std::string assembly;
+	std::vector<std::string> registers;
 };
 
 struct Member
