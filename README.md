@@ -207,8 +207,8 @@ assembler routines, so they work in every picture mode.
 | `void xgs_sram_write(addr, value)` | writes one |
 | `void xgs_sram_bank(b)` | 0 or 1: which 64 KB half the two functions above use |
 
-Reading the joystick takes about 200 cycles, a command to the sound chip about 250, a
-byte of the SRAM about 330 (the page of 12 bits is shifted in bit by bit): too long for
+Each call takes a few hundred cycles (the 16 bits of the joystick, the 11 bits of a
+sound command and the 12 bits of the SRAM page are clocked out one by one): too long for
 a picture line, but nothing for the time of the game. `examples/xgs_joystick.c` moves a
 tile and plays a note.
 
