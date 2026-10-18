@@ -234,8 +234,13 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    `xgs_note`, `xgs_sram_read/write/bank`, assembler routines with parameters (in banks,
    marked with `@bank`). Tested against the ports of the emulator.
    Status: Complete
-5. **4e** sprites, and Pong in C.
-   Status: Not Started
+5. **4e** Pong in C (`examples/pong.c`). Decision: no sprite engine; the picture of this
+   compiler is the tile map, and a game moves its objects by changing cells (16 x 12
+   cells, one cell is 1/16 of the width and 16 lines). Pixel sprites would need a second
+   kernel and are not part of this plan. The tests (`tests/pong_test.cpp`) run the game for
+   up to 900 frames: court, paddles on the joystick, ball inside the court and drawn where
+   it is, points, score row, sound.
+   Status: Complete
 **Success Criteria**:
 - A Pong written in C runs in `xgsemu` at 60 frames with a stable picture and
   sound.
@@ -246,7 +251,7 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: In Progress (4e next)
+**Status**: Complete
 
 ## Stage 5: size, speed and use
 
