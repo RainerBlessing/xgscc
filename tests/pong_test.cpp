@@ -62,6 +62,56 @@ public:
         return cpu.getRAM()[compiled.variables.at(name)];
     }
 
+    void poke(const char* name, int value) {
+        cpu.getRAM()[compiled.variables.at(name)] = value;
+    }
+
+    // The game logic runs between two calls of xgs_frame(). These stop the program inside the
+    // picture kernel, where no game code runs and the variables can be changed.
+    bool inKernel() {
+        for (size_t i = 0; i < compiled.map.rom.size(); i++) {
+            const RomEntry& entry = compiled.map.rom[i];
+            if (entry.name == "xgs_frame") {
+                int pc = *cpu.getPC();
+                return pc >= entry.address && pc < entry.address + entry.words;
+            }
+        }
+        return false;
+    }
+
+    void enterKernel() {
+        while (!inKernel()) {
+            cpu.execute();
+        }
+    }
+
+    void leaveKernel() {
+        while (inKernel()) {
+            cpu.execute();
+        }
+    }
+
+    // Sets the state of the ball and the paddles just before a move of the ball (the ball
+    // moves in the frames after which frame & 3 is 1; no paddle moves in that frame), lets
+    // the game run through that frame and stops again in the kernel.
+    void moveBallFrom(int x, int y, int right, int down, int leftY, int rightY) {
+        enterKernel();
+        while ((value("frame") & 3) != 0) {
+            leaveKernel();
+            enterKernel();
+        }
+        poke("ball_x", x);
+        poke("ball_y", y);
+        poke("ball_right", right);
+        poke("ball_down", down);
+        poke("left_y", leftY);
+        poke("right_y", rightY);
+        poke("score_left", 0);
+        poke("score_right", 0);
+        leaveKernel();
+        enterKernel();
+    }
+
     // the tile number at a cell
     int tile(int x, int y) {
         return cpu.getRAM()[compiled.variables.at("xgs_map") + y * 17 + x] / 22;
@@ -332,4 +382,100 @@ TEST(PongTitleTest, TheTitleIsInTheMiddleOfTheScreen) {
     }
     EXPECT_EQ(16 - right, left);        // as many empty columns on the left as on the right
     EXPECT_EQ(10 - bottom, top);        // and as many empty rows above as below
+}
+
+// the collision of the ball and the paddles
+
+class PongCollisionTest : public ::testing::Test {
+protected:
+    Game g;
+    void SetUp() override {
+        ASSERT_TRUE(g.start(0x10)) << g.compiled.error;
+        g.frames(3);
+        ASSERT_EQ(1, g.value("playing"));
+    }
+};
+
+TEST_F(PongCollisionTest, TheBallAtTheRightPaddleBouncesOnEveryRowOfIt) {
+    for (int paddle = 1; paddle <= 7; paddle++) {
+        for (int row = 1; row <= 9; row++) {
+            // the ball comes down onto row `row`: it was in the row above
+            g.moveBallFrom(15, row - 1, 1, 1, 4, paddle);
+            bool hit = row >= paddle && row < paddle + 3;
+            std::string where = "paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
+            if (hit) {
+                EXPECT_EQ(0, g.value("ball_right")) << where;
+                EXPECT_EQ(14, g.value("ball_x")) << where;
+                EXPECT_EQ(row, g.value("ball_y")) << where;
+                EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
+            } else {
+                EXPECT_EQ(1, g.value("score_left")) << where;
+                EXPECT_EQ(0, g.value("score_right")) << where;
+                EXPECT_EQ(8, g.value("ball_x")) << where;     // served again
+            }
+        }
+    }
+}
+
+TEST_F(PongCollisionTest, TheBallAtTheLeftPaddleBouncesOnEveryRowOfIt) {
+    for (int paddle = 1; paddle <= 7; paddle++) {
+        for (int row = 1; row <= 9; row++) {
+            g.moveBallFrom(1, row - 1, 0, 1, paddle, 4);
+            bool hit = row >= paddle && row < paddle + 3;
+            std::string where = "paddle " + std::to_string(paddle) + ", ball row " + std::to_string(row);
+            if (hit) {
+                EXPECT_EQ(1, g.value("ball_right")) << where;
+                EXPECT_EQ(2, g.value("ball_x")) << where;
+                EXPECT_EQ(row, g.value("ball_y")) << where;
+                EXPECT_EQ(0, g.value("score_left") + g.value("score_right")) << where;
+            } else {
+                EXPECT_EQ(1, g.value("score_right")) << where;
+                EXPECT_EQ(0, g.value("score_left")) << where;
+                EXPECT_EQ(8, g.value("ball_x")) << where;
+            }
+        }
+    }
+}
+
+TEST_F(PongCollisionTest, TheBallGoingUpIsTestedAtItsNewRowToo) {
+    for (int row = 1; row <= 8; row++) {
+        g.moveBallFrom(15, row + 1, 1, 0, 4, 4);       // moving up onto `row`
+        bool hit = row >= 4 && row < 7;
+        EXPECT_EQ(hit ? 0 : 1, hit ? g.value("ball_right") : g.value("score_left")) << row;
+    }
+}
+
+TEST_F(PongCollisionTest, TheBallMovesOneCellAtATimeAndNeverReachesAPaddleColumn) {
+    g.moveBallFrom(14, 5, 1, 1, 4, 4);
+    EXPECT_EQ(15, g.value("ball_x"));
+    EXPECT_EQ(6, g.value("ball_y"));
+    g.moveBallFrom(2, 5, 0, 1, 4, 4);
+    EXPECT_EQ(1, g.value("ball_x"));
+}
+
+TEST_F(PongCollisionTest, TheBallBouncesOffTheTopAndTheBottomWall) {
+    g.moveBallFrom(8, 1, 1, 0, 4, 4);          // going up at the top row
+    EXPECT_EQ(2, g.value("ball_y"));
+    EXPECT_EQ(1, g.value("ball_down"));
+    g.moveBallFrom(8, 9, 1, 1, 4, 4);          // going down at the bottom row
+    EXPECT_EQ(8, g.value("ball_y"));
+    EXPECT_EQ(0, g.value("ball_down"));
+}
+
+TEST_F(PongCollisionTest, ABounceAtTheCornerGoesOffTheWallAndTheNewRowDecidesTheHit) {
+    // right paddle at rows 7..9: the ball at the bottom row bounces up to row 8 and is caught
+    g.moveBallFrom(15, 9, 1, 1, 4, 7);
+    EXPECT_EQ(0, g.value("ball_right"));
+    EXPECT_EQ(8, g.value("ball_y"));
+    // right paddle at rows 1..3: the same ball, now at row 8, is missed
+    g.moveBallFrom(15, 9, 1, 1, 4, 1);
+    EXPECT_EQ(1, g.value("score_left"));
+}
+
+TEST_F(PongCollisionTest, ABounceIsDrawnAndMakesASound) {
+    g.moveBallFrom(15, 4, 1, 1, 4, 5);
+    int notes = g.sound.notes;
+    g.moveBallFrom(15, 4, 1, 1, 4, 5);
+    EXPECT_GT(g.sound.notes, notes);
+    EXPECT_EQ(BALL_TILE, g.tile(g.value("ball_x"), g.value("ball_y")));
 }
