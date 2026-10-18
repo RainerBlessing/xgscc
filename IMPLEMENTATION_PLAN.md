@@ -206,8 +206,14 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
 **Steps**:
 1. **4a** the kernel: vertical sync, N lines of one colour, `xgs_wait_frame`. Tests
    headless: every line 5080 cycles, the prefix at the offsets of `doc/video.md`, the
-   frame within 20 cycles of 1 330 956, the picture on `Video`.
-   Status: Not Started
+   frame within 20 cycles of 1 330 956, the picture on `Video`. The kernel is one
+   function `xgs_frame()` (wait for the frame period with the RTCC, vertical sync,
+   the lines) so that the game does not have to hit the start of a frame. Measured:
+   every line exactly 5080 cycles, the period within -4..+1 cycles of 1 330 956 for a
+   game of up to 65 000 cycles (see `doc/video.md`, section 8). The picture on
+   `Video` itself is not tested because `xgscc` has no SDL; the tests apply the same
+   rules for sync, burst and lines.
+   Status: Complete
 2. **4b** assembler functions in the compiler, the kernel of 4a is the first user.
    Status: Not Started
 3. **4c** the tile map kernel and `xgs.h`.
@@ -226,7 +232,7 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
   examples.
 - A frame of the C game compared with a stored picture (checksum of the 560x525
   image from `Video`).
-**Status**: In Progress (the study is done, 4a next)
+**Status**: In Progress (4b next)
 
 ## Stage 5: size, speed and use
 

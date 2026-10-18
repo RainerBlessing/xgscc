@@ -239,3 +239,28 @@ writes, which fits only a coarse picture.
   nothing new.
 - The NTSC details (burst phase, the colour wheel of the XGS ME board) are as the
   emulator has them; the real hardware could differ.
+
+## 8. Result of step 4a: the kernel
+
+`src/kernel.cpp` makes `xgsKernelSource(lines, colour)`: the assembler of `xgs_init` and
+`xgs_frame`, tested in `tests/kernel_test.cpp` by running it on the emulated SX52 and
+recording every write to RE.
+
+- **Lines**: every line has the six writes at the offsets of section 2 (0, 120, 496,
+  544, 744, 872 cycles) and is exactly 5080 cycles long, in every line of every frame.
+- **Frame**: the vertical sync is `f0` for exactly 19 283 cycles, then the lines, then the
+  blanking level is held while the game runs. The frame period is 1 330 956 cycles; the
+  measured error is **−4 to +1 cycles** (the wait ends when a loop sees the RTCC tick,
+  which takes between 0 and 5 cycles).
+- **The time of the game**: `xgs_frame()` waits until the frame is over, so the rate
+  does not depend on the game as long as the game takes less than the slack, which is
+  `1 330 956 − 19 284 − 5080 × lines` cycles (336 000 for 192 lines, 16 000 for 255)
+  **and** less than 65 536 cycles, what the RTCC can count with its largest prescaler
+  (1:256). Longer makes that one frame longer, by 65 536 cycles when the game overran
+  the counter; the lines stay exact. A game that needs more time per frame will call a
+  `xgs_tick()` that counts the wraps (not written yet).
+- **Size and place**: about 190 words, in the first half of a page, on one page, no
+  `page` instruction inside (the text has no `autopage`).
+- **Calling it**: `call xgs_frame` and `call xgs_init`; they end with `retp`.
+  They use four registers, `xgs_count`, `xgs_n`, `xgs_hi`, `xgs_lo`, that the caller
+  defines. How C gets to call them is step 4b.
