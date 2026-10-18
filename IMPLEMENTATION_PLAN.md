@@ -281,10 +281,15 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    expressions and `defined`, `#error`, `#include "file"`; the library reads its
    settings (`XGS_*`) from the macros that are defined at the end (`LexInfo`), so they
    may come from a header and follow `#if`. Status: Complete
-3. **5c** `.obj` output and a listing with C line numbers. Status: Not Started
+3. **5c** `.obj` output (a binary image when the output ends in `.obj`) and `--listing`:
+   the code generator writes `_C<line>_<n>:` labels in front of statements (only when a
+   listing is asked for; the optimizer looks through them, the ROM is the same with and
+   without), the listing shows each group of words under its C line, library and runtime
+   code under its name. The line numbers carry the file in their upper bits, so errors and
+   listings of included files name the right file. Status: Complete
 4. **5d** README review and the size goal: what else makes code smaller (bank-aware
    allocation, page words, calling convention). Status: Not Started
-**Status**: In Progress (5c next)
+**Status**: In Progress (5d next)
 
 ## Open questions
 

@@ -7,6 +7,7 @@
 #include "errors.h"
 #include "lexer.h"
 #include "library.h"
+#include "listing.h"
 #include "optimizer.h"
 #include "parser.h"
 #include "runtime.h"
@@ -76,13 +77,13 @@ static void buildMap(const CodeInfo& info, const map<string, int>& labels, Compi
 	sort(map.rom.begin(), map.rom.end(), lessAddress);
 }
 
-CompileResult compile(const string& source, const string& fileName, int optimizeLevel)
+CompileResult compile(const string& source, const string& fileName, int optimizeLevel, bool listing)
 {
 	CompileResult result;
 	result.ok = false;
+	LexInfo info;
 	try
 	{
-		LexInfo info;
 		size_t slash = fileName.find_last_of('/');
 		string includeDirectory = slash == string::npos ? "." : fileName.substr(0, slash);
 		Program program = parse(tokenize(source, includeDirectory, &info));
@@ -120,9 +121,12 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 		// the runtime comes behind the program, only what is called gets into the ROM
 		Program runtime = parse(tokenize(runtimeSource()));
 		for (size_t i = 0; i < runtime.functions.size(); i++)
+		{
+			runtime.functions[i].library = true;
 			program.functions.push_back(std::move(runtime.functions[i]));
+		}
 		CodeInfo codeInfo;
-		result.assembly = generateAssembly(program, &codeInfo);
+		result.assembly = generateAssembly(program, &codeInfo, listing);
 		if (optimizeLevel >= 1)
 			result.assembly = optimize(result.assembly);
 		result.variables = codeInfo.variables;
@@ -139,13 +143,20 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 			throw CompileError(0, fileName + ": internal error in the generated code: " + error);
 		}
 		buildMap(codeInfo, labels, result);
+		if (listing)
+			result.listing = listingText(fileName, source, info, labels, result.rom, result.map);
 		result.ok = true;
 	}
 	catch (const CompileError& error)
 	{
 		ostringstream message;
 		if (error.line > 0)
-			message << fileName << ":" << error.line << ": " << error.message;
+		{
+			// the file of the line: an included file, or the main source
+			int file = fileOfLine(error.line);
+			string name = file > 0 && file < (int) info.files.size() ? info.files[file] : fileName;
+			message << name << ":" << lineInFile(error.line) << ": " << error.message;
+		}
 		else
 			message << error.message;
 		result.error = message.str();

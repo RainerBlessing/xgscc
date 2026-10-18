@@ -81,6 +81,25 @@ TEST_F(CliTest, TheObjImageHoldsEmptyWordsAs0FFF) {
     EXPECT_EQ('\x0f', image[8001]);
 }
 
+TEST_F(CliTest, ListingWritesAFileNextToTheOutput) {
+    Result result = xgscc("--listing " + quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/counter3.hex"));
+    EXPECT_EQ(0, result.exitCode) << result.output;
+    std::string listing = readFile(dir + "/counter3.lst");
+    EXPECT_NE(std::string::npos, listing.find("Listing of ")) << listing;
+    EXPECT_NE(std::string::npos, listing.find("counter.c:")) << listing;
+}
+
+TEST_F(CliTest, TheHexFileIsTheSameWithAndWithoutTheListing) {
+    xgscc("--listing " + quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/l1.hex"));
+    xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/l2.hex"));
+    EXPECT_EQ(readFile(dir + "/l2.hex"), readFile(dir + "/l1.hex"));
+}
+
+TEST_F(CliTest, OptimizationLevelsAreAccepted) {
+    EXPECT_EQ(0, xgscc("-O0 " + quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/o0.hex")).exitCode);
+    EXPECT_EQ(0, xgscc("-O1 " + quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/o1.hex")).exitCode);
+}
+
 TEST_F(CliTest, WritesAHexFile) {
     Result result = xgscc(quoted(EXAMPLES_DIR "/counter.c") + " -o " + quoted(dir + "/counter.hex"));
     EXPECT_EQ(0, result.exitCode) << result.output;

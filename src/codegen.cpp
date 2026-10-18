@@ -117,7 +117,7 @@ namespace
 
 	struct FunctionInfo
 	{
-		FunctionInfo() : line(0), returnsValue(false), body(NULL), defined(false), temporaries(0), usesHigh(false), usesLow(false) {}
+		FunctionInfo() : line(0), returnsValue(false), body(NULL), defined(false), temporaries(0), library(false), usesHigh(false), usesLow(false) {}
 
 		string name;
 		int line;
@@ -136,6 +136,7 @@ namespace
 		vector<Block> blocks;	// arrays: they keep their place, the frames of functions are shared
 		vector<Table> tables;
 		int temporaries;	// the most that were in use at a time
+		bool library;		// not written by the user: no line markers
 		bool usesHigh;		// acc_hi, acc_lo
 		bool usesLow;
 		map<string, int> calls;	// the functions called -> line of the first call
@@ -255,7 +256,7 @@ namespace
 	class Generator
 	{
 	public:
-		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), usesUpperRam(false), loopDepth(0), temporariesInUse(0), nextLabel(0), callDepth(0)
+		Generator() : current(NULL), mainFunction(NULL), usesHighByte(false), usesLowByte(false), usesUpperRam(false), lineMarkers(false), markerCount(0), loopDepth(0), temporariesInUse(0), nextLabel(0), callDepth(0)
 		{
 			allocatable.insert(ACC_HIGH);
 			allocatable.insert(ACC_LOW);
@@ -263,8 +264,9 @@ namespace
 			labelNames[ACC_LOW] = "acc_lo (kept while FSR points to data)";
 		}
 
-		string run(const Program& program, CodeInfo* info)
+		string run(const Program& program, CodeInfo* info, bool markers)
 		{
+			lineMarkers = markers;
 			scopes.push_back(map<string, Variable>());
 			structDefinitions = program.structs;
 			collectFunctions(program);
@@ -307,6 +309,8 @@ namespace
 		set<string> arrayLabels;		// the addresses of arrays are no registers
 		set<string> pinned;			// labels that have to be direct registers
 		bool usesUpperRam;			// something sits in banks 8-15, so FSR bit 7 gets set
+		bool lineMarkers;			// write "_C<line>_<n>:" labels in front of statements, for the listing
+		int markerCount;
 		Block pendingBlock;			// the block of the struct variable that was declared last
 		vector<StructDefinition> structDefinitions;
 		map<string, map<string, Variable> > structMembers;		// label of a struct variable -> its members
@@ -335,6 +339,7 @@ namespace
 				info.defined = true;
 				info.body = function.body.get();
 				info.assembly = function.assembly;
+				info.library = function.library;
 				info.registers = function.registers;
 				info.line = function.line;
 				info.parameters = function.parameters;
@@ -2372,6 +2377,8 @@ namespace
 				text += markers + converted + "\n";
 			}
 			function.code << "        autopage off\n" << function.entry << ":\n";
+			if (lineMarkers)
+				function.code << "_C0_" << markerCount++ << ":\n";
 			istringstream lines(text);
 			string line;
 			while (getline(lines, line))
@@ -2395,6 +2402,8 @@ namespace
 			loopDepth = 0;
 			loops.clear();
 			ensureParameterLabels(function);
+			if (function.library)
+				marker(0);
 
 			scopes.push_back(map<string, Variable>());
 			for (size_t i = 0; i < function.parameters.size(); i++)
@@ -2421,8 +2430,17 @@ namespace
 			current = NULL;
 		}
 
+		// where the statement starts, for the listing: the line is that of the statement
+		void marker(int line)
+		{
+			if (lineMarkers && current != NULL)
+				current->code << "_C" << line << "_" << markerCount++ << ":\n";
+		}
+
 		void statement(const Stmt& stmt)
 		{
+			if (stmt.kind != Stmt::EMPTY && stmt.kind != Stmt::BLOCK && stmt.line > 0 && current != NULL && !current->library)
+				marker(stmt.line);
 			switch (stmt.kind)
 			{
 			case Stmt::EMPTY:
@@ -3173,7 +3191,7 @@ namespace
 					}
 					continue;
 				}
-				if (!trimmed.empty() && trimmed[trimmed.size() - 1] == ':')
+				if (!trimmed.empty() && trimmed[trimmed.size() - 1] == ':' && trimmed.compare(0, 2, "_C") != 0)
 					bank = trimmed == "_start:" ? 0 : -1;
 				out << line << "\n";
 				if (trimmed.compare(0, 5, "call ") == 0)
@@ -3326,6 +3344,8 @@ namespace
 				"        org 0\n"
 				"        autopage on\n"
 				"_start:\n";
+			if (lineMarkers)
+				body << "_C0_" << markerCount++ << ":\n";
 			body << initialization.str();
 			for (size_t i = 0; i < reachable.size(); i++)
 				body << functions[reachable[i]].initialization.str();
@@ -3346,7 +3366,7 @@ namespace
 	};
 }
 
-string generateAssembly(const Program& program, CodeInfo* info)
+string generateAssembly(const Program& program, CodeInfo* info, bool lineMarkers)
 {
-	return Generator().run(program, info);
+	return Generator().run(program, info, lineMarkers);
 }

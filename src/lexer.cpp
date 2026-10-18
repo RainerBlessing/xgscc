@@ -41,11 +41,14 @@ namespace
 	// what all the files of one run share
 	struct State
 	{
+		State() { files.push_back(""); }
 		map<string, Macro> macros;
 		set<string> includes;
+		vector<string> files;		// the files that were read, 0 is the main source
 	};
 
 	const int MAX_INCLUDE_DEPTH = 16;
+	const size_t LINE_FILE_LIMIT = 2000;
 
 	string trimmed(const string& text)
 	{
@@ -278,7 +281,11 @@ namespace
 			stringstream content;
 			content << file.rdbuf();
 			size_t slash = path.find_last_of('/');
-			Lexer nested(content.str(), path.substr(0, slash), state, depth + 1);
+			if (state->files.size() >= LINE_FILE_LIMIT)
+				throw CompileError(directiveLine, "too many #include files");
+			state->files.push_back(path);
+			int firstLine = 1 + ((int) (state->files.size() - 1) << LINE_FILE_SHIFT);
+			Lexer nested(content.str(), path.substr(0, slash), state, depth + 1, true, firstLine);
 			vector<Token> inner = nested.run();
 			inner.pop_back();		// END
 			tokens->insert(tokens->end(), inner.begin(), inner.end());
@@ -885,9 +892,20 @@ namespace
 vector<Token> tokenize(const string& source, const string& includeDir, LexInfo* info)
 {
 	State state;
-	vector<Token> tokens = Lexer(source, includeDir, &state).run();
+	vector<Token> tokens;
+	try
+	{
+		tokens = Lexer(source, includeDir, &state).run();
+	}
+	catch (const CompileError&)
+	{
+		if (info != NULL)
+			info->files = state.files;
+		throw;
+	}
 	if (info != NULL)
 	{
+		info->files = state.files;
 		info->includes = state.includes;
 		info->macros.clear();
 		for (map<string, Macro>::const_iterator m = state.macros.begin(); m != state.macros.end(); ++m)

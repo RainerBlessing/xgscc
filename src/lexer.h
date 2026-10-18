@@ -14,9 +14,19 @@ struct Token
 	int line;
 };
 
+/**
+ * The line number of a token (and of everything made from it) holds the file in its
+ * upper bits: lineInFile() is the number in that file, fileOfLine() the index in
+ * LexInfo::files (0 is the main source).
+ */
+const int LINE_FILE_SHIFT = 20;
+inline int lineInFile(int line) { return line & ((1 << LINE_FILE_SHIFT) - 1); }
+inline int fileOfLine(int line) { return line >> LINE_FILE_SHIFT; }
+
 /** What the source defined and included, for the library. */
 struct LexInfo
 {
+	std::vector<std::string> files;				// the paths of the files that were read; index 0 (the main source) is empty
 	std::set<std::string> includes;				// the names of all #include lines that were read: "stdint.h", "xgs.h", ...
 	std::map<std::string, std::vector<Token> > macros;	// the macros that are defined at the end: name -> replacement
 };

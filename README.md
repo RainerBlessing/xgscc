@@ -7,6 +7,9 @@ file that [xgsemu](https://github.com/RainerBlessing/xgsemu) runs.
 xgscc game.c -o game.hex      # compile
 xgscc -S game.c -o game.asm   # the assembler source instead
 xgscc --map game.c -o game.hex   # also writes game.map: where everything is
+xgscc --listing game.c -o game.hex   # also writes game.lst: the words under their C lines
+xgscc game.c -o game.obj       # a binary image (two bytes per word) instead of hex
+xgscc -O0 game.c -o game.hex   # without the optimizer (-O1 is the default)
 xgsemu game.hex
 ```
 
@@ -89,9 +92,8 @@ void add(uint8_t value)
   unknown names are 0), `#error`, and `#include`: `<stdint.h>` and `<xgs.h>` are built
   in, `"file.h"` reads the file relative to the directory of the file that includes it (a
   file that includes itself is refused after 16
-  levels). Not there: `#pragma`, `#line`, `-D` on the command line. A line number in an
-  error that comes from an included file is the line in that file, the message does not
-  name the file.
+  levels). Not there: `#pragma`, `#line`, `-D` on the command line. An error in an
+  included file is reported with that file's name and line.
 - **Tables in ROM**: a `const` array is a table in the program memory and takes no
   RAM: `const uint8_t sine[64] = { ... };`, `const uint16_t steps[] = { 1000, 800 };`,
   `const uint8_t text[] = "Hello";` (the string ends with a 0). It is read with an

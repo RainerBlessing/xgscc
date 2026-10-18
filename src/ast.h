@@ -102,7 +102,7 @@ struct Parameter
 
 struct Function
 {
-	Function() : line(0), returnsValue(false) {}
+	Function() : line(0), returnsValue(false), library(false) {}
 
 	std::string name;
 	int line;
@@ -116,6 +116,7 @@ struct Function
 	// the direct registers. It ends with retp itself.
 	std::string assembly;
 	std::vector<std::string> registers;
+	bool library;		// made by the library or the runtime, not written by the user: no line markers
 };
 
 struct Member

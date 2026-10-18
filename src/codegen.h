@@ -30,6 +30,6 @@ struct CodeInfo
  * Translates the program into assembler source for assembleSource() and tells
  * where the variables are. Throws CompileError.
  */
-std::string generateAssembly(const Program& program, CodeInfo* info);
+std::string generateAssembly(const Program& program, CodeInfo* info, bool lineMarkers = false);
 
 #endif /*CODEGEN_H_*/

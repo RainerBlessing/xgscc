@@ -27,6 +27,7 @@ static Function assemblerFunction(const string& name, const string& text, const 
 	function.body = StmtPtr(new Stmt(Stmt::BLOCK, 0));
 	function.assembly = text;
 	function.registers = registers;
+	function.library = true;
 	return function;
 }
 
@@ -62,7 +63,10 @@ static void addXgsHardware(Program* program)
 	Program library = parse(tokenize("typedef unsigned char uint8_t;\n"
 		"void xgs_note(uint8_t channel, uint8_t note) { xgs_sound(2, (channel << 6) | note); }\n"));
 	for (size_t i = 0; i < library.functions.size(); i++)
+	{
+		library.functions[i].library = true;
 		program->functions.push_back(std::move(library.functions[i]));
+	}
 }
 
 void addXgsLibrary(Program* program, int lines, int colour)
@@ -105,7 +109,10 @@ void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
 	for (size_t i = 0; i < library.globals.size(); i++)
 		program->globals.insert(program->globals.begin() + i, std::move(library.globals[i]));
 	for (size_t i = 0; i < library.functions.size(); i++)
+	{
+		library.functions[i].library = true;
 		program->functions.push_back(std::move(library.functions[i]));
+	}
 
 	vector<string> none;
 	vector<string> frameRegisters;

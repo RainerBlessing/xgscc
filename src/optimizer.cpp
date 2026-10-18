@@ -23,9 +23,27 @@ namespace
 		return text.substr(first, text.find_last_not_of(" \t") - first + 1);
 	}
 
+	// "_C<line>_<n>:" says where a statement of the C source starts (for the listing); it
+	// changes nothing for the rules: they look through it
+	bool isMarker(const Line& line)
+	{
+		return !line.text.empty() && line.text.compare(0, 2, "_C") == 0 && line.text[line.text.size() - 1] == ':';
+	}
+
 	bool isLabel(const Line& line)
 	{
-		return !line.text.empty() && line.text[0] != ' ' && line.text[0] != '\t' && line.text[line.text.size() - 1] == ':';
+		return !line.text.empty() && line.text[0] != ' ' && line.text[0] != '\t' && line.text[line.text.size() - 1] == ':' && !isMarker(line);
+	}
+
+	// the last line that is no marker, or NULL
+	const Line* lastReal(const vector<Line>& lines)
+	{
+		for (size_t i = lines.size(); i > 0; i--)
+		{
+			if (!isMarker(lines[i - 1]))
+				return &lines[i - 1];
+		}
+		return NULL;
 	}
 
 	string labelName(const Line& line)
@@ -101,7 +119,7 @@ namespace
 	// the index of the next line that is not a label, or lines.size()
 	size_t afterLabels(const vector<Line>& lines, size_t i)
 	{
-		while (i < lines.size() && isLabel(lines[i]))
+		while (i < lines.size() && (isLabel(lines[i]) || isMarker(lines[i])))
 			i++;
 		return i;
 	}
@@ -112,6 +130,8 @@ namespace
 		while (i > 0)
 		{
 			i--;
+			if (isMarker(lines[i]))
+				continue;
 			if (!isInstruction(lines[i]) || lines[i].protectedLine)
 				return false;
 			string m = mnemonic(lines[i]);
@@ -168,9 +188,9 @@ namespace
 		for (size_t i = 0; i < lines->size(); i++)
 		{
 			const Line& line = (*lines)[i];
-			if (!line.protectedLine && !result.empty() && isInstruction(line) && trim(line.text) == "or w, #0")
+			if (!line.protectedLine && lastReal(result) != NULL && isInstruction(line) && trim(line.text) == "or w, #0")
 			{
-				const Line& before = result.back();
+				const Line& before = *lastReal(result);
 				string o = operands(before);
 				if (!before.protectedLine && isInstruction(before) && mnemonic(before) == "mov" && o.compare(0, 3, "w, ") == 0 &&
 						o.compare(3, 1, "#") != 0 && !skippedByBefore(*lines, i))
@@ -196,9 +216,9 @@ namespace
 			{
 				string target = operands(line);
 				bool next = false;
-				for (size_t j = i + 1; j < lines->size() && isLabel((*lines)[j]); j++)
+				for (size_t j = i + 1; j < lines->size() && (isLabel((*lines)[j]) || isMarker((*lines)[j])); j++)
 				{
-					if (labelName((*lines)[j]) == target)
+					if (isLabel((*lines)[j]) && labelName((*lines)[j]) == target)
 						next = true;
 				}
 				if (next)
@@ -261,6 +281,11 @@ namespace
 		for (size_t i = 0; i < lines->size(); i++)
 		{
 			const Line& line = (*lines)[i];
+			if (isMarker(line))
+			{
+				result.push_back(line);
+				continue;
+			}
 			if (line.protectedLine || isLabel(line) || isDirective(line) || !isInstruction(line))
 			{
 				dead = false;
@@ -288,25 +313,24 @@ namespace
 		for (size_t i = 0; i < lines->size(); i++)
 		{
 			const Line& line = (*lines)[i];
-			if (!line.protectedLine && isInstruction(line) && mnemonic(line) == "bank" && !result.empty())
+			size_t at = result.size();
+			while (at > 0 && isMarker(result[at - 1]))
+				at--;
+			if (!line.protectedLine && isInstruction(line) && mnemonic(line) == "bank" && at > 0)
 			{
-				const Line& before = result.back();
-				if (!before.protectedLine && isInstruction(before) && mnemonic(before) == "bank")
+				const Line& before = result[at - 1];
+				if (!before.protectedLine && isInstruction(before) && mnemonic(before) == "bank" && !skippedByBefore(result, at - 1))
 				{
-					// the first one is the one that stays only if it cannot be skipped
-					if (operands(before) == operands(line) && !skippedByBefore(result, result.size() - 1))
+					if (operands(before) == operands(line))
 					{
 						changed = true;
 						continue;
 					}
-					if (operands(before) != operands(line) && !skippedByBefore(result, result.size() - 1))
-					{
-						// the later bank wins: the earlier one is useless
-						result.pop_back();
-						result.push_back(line);
-						changed = true;
-						continue;
-					}
+					// the later bank wins: the earlier one is useless
+					result.erase(result.begin() + (at - 1));
+					result.push_back(line);
+					changed = true;
+					continue;
 				}
 			}
 			result.push_back(line);
