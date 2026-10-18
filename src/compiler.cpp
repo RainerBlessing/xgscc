@@ -82,19 +82,22 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 	result.ok = false;
 	try
 	{
-		Program program = parse(tokenize(source));
-		if (includes(source, "xgs.h"))
+		LexInfo info;
+		size_t slash = fileName.find_last_of('/');
+		string includeDirectory = slash == string::npos ? "." : fileName.substr(0, slash);
+		Program program = parse(tokenize(source, includeDirectory, &info));
+		if (includes(info, "xgs.h"))
 		{
 			long lines = 192;
 			long colour = 0xe6;
 			long columns = 16;
 			long rows = 12;
 			long tileLines = 16;
-			definedNumber(source, "XGS_LINES", &lines);
-			definedNumber(source, "XGS_COLOR", &colour);
-			bool tiles = definedNumber(source, "XGS_COLUMNS", &columns);
-			tiles = definedNumber(source, "XGS_ROWS", &rows) || tiles;
-			tiles = definedNumber(source, "XGS_TILE_LINES", &tileLines) || tiles;
+			definedNumber(info, "XGS_LINES", &lines);
+			definedNumber(info, "XGS_COLOR", &colour);
+			bool tiles = definedNumber(info, "XGS_COLUMNS", &columns);
+			tiles = definedNumber(info, "XGS_ROWS", &rows) || tiles;
+			tiles = definedNumber(info, "XGS_TILE_LINES", &tileLines) || tiles;
 			if (lines < 1 || lines > 255)
 				throw CompileError(1, "XGS_LINES has to be a number from 1 to 255");
 			if (colour < 0 || colour > 255)
@@ -118,12 +121,12 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 		Program runtime = parse(tokenize(runtimeSource()));
 		for (size_t i = 0; i < runtime.functions.size(); i++)
 			program.functions.push_back(std::move(runtime.functions[i]));
-		CodeInfo info;
-		result.assembly = generateAssembly(program, &info);
+		CodeInfo codeInfo;
+		result.assembly = generateAssembly(program, &codeInfo);
 		if (optimizeLevel >= 1)
 			result.assembly = optimize(result.assembly);
-		result.variables = info.variables;
-		result.highBytes = info.highBytes;
+		result.variables = codeInfo.variables;
+		result.highBytes = codeInfo.highBytes;
 
 		result.rom.assign(ROM_WORDS, 0xfff);
 		string error;
@@ -135,7 +138,7 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 				throw CompileError(0, fileName + ": the program is too big for the ROM (4096 words)");
 			throw CompileError(0, fileName + ": internal error in the generated code: " + error);
 		}
-		buildMap(info, labels, result);
+		buildMap(codeInfo, labels, result);
 		result.ok = true;
 	}
 	catch (const CompileError& error)

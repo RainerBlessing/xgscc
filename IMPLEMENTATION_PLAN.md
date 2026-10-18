@@ -277,11 +277,14 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    test runs at both levels and compares the RAM. Result: pong's C code 695 -> 669 words
    (-3.7 %), far from the 20 % of the success criterion; see below.
    Status: Complete
-2. **5b** a real preprocessor. Status: Not Started
+2. **5b** a real preprocessor in the lexer: macros with parameters, `#if` family with
+   expressions and `defined`, `#error`, `#include "file"`; the library reads its
+   settings (`XGS_*`) from the macros that are defined at the end (`LexInfo`), so they
+   may come from a header and follow `#if`. Status: Complete
 3. **5c** `.obj` output and a listing with C line numbers. Status: Not Started
 4. **5d** README review and the size goal: what else makes code smaller (bank-aware
    allocation, page words, calling convention). Status: Not Started
-**Status**: In Progress (5b next)
+**Status**: In Progress (5c next)
 
 ## Open questions
 

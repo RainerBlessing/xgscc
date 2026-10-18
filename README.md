@@ -17,7 +17,7 @@ This is stage 2 of `IMPLEMENTATION_PLAN.md`: a small subset of C with functions.
 ```c
 #include <stdint.h>
 
-#define LIMIT 10                // names for constants (no macros with parameters)
+#define LIMIT 10                // names for constants (macros with parameters work, too)
 
 const uint8_t STEP = 2;         // a constant, takes no RAM
 uint8_t total;                  // global variables, optionally with a constant
@@ -83,8 +83,15 @@ void add(uint8_t value)
   function and returned. Not supported: pointers to pointers, arrays of arrays,
   arrays as parameters (use a pointer), the difference of two pointers, `*p++`
   (write `*p` and `p++` separately).
-- **Preprocessor**: `#include` is ignored, `#define NAME tokens` and `#undef NAME`
-  work. Nothing else (no `#if`, no macros with parameters) yet.
+- **Preprocessor**: `#define NAME tokens`, `#define NAME(a, b) tokens` (the arguments are
+  expanded first, a macro is not expanded inside itself; no `#` and `##`), `#undef`, `#if`,
+  `#ifdef`, `#ifndef`, `#elif`, `#else`, `#endif` (the operators of C, `defined(X)`,
+  unknown names are 0), `#error`, and `#include`: `<stdint.h>` and `<xgs.h>` are built
+  in, `"file.h"` reads the file from the directory of the source (then from the
+  directory of the file that includes it; a file that includes itself is refused after 16
+  levels). Not there: `#pragma`, `#line`, `-D` on the command line. A line number in an
+  error that comes from an included file is the line in that file, the message does not
+  name the file.
 - **Tables in ROM**: a `const` array is a table in the program memory and takes no
   RAM: `const uint8_t sine[64] = { ... };`, `const uint16_t steps[] = { 1000, 800 };`,
   `const uint8_t text[] = "Hello";` (the string ends with a 0). It is read with an

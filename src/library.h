@@ -2,6 +2,7 @@
 #define LIBRARY_H_
 #include <string>
 #include "ast.h"
+#include "lexer.h"
 
 /**
  * The XGS library, available with #include <xgs.h>:
@@ -25,12 +26,12 @@ void addXgsLibrary(Program* program, int lines, int colour);
 void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines);
 
 /** Whether the source has the line #include <name> or #include "name". */
-bool includes(const std::string& source, const std::string& name);
+bool includes(const LexInfo& info, const std::string& name);
 
 /**
- * The number in the line "#define name number" of the source, decimal or 0x hex.
- * Returns false if there is no such line; throws CompileError if it is no number.
+ * The number that name is defined as (#define name number), if it is defined.
+ * Returns false if it is not; throws CompileError if it is no number.
  */
-bool definedNumber(const std::string& source, const std::string& name, long* value);
+bool definedNumber(const LexInfo& info, const std::string& name, long* value);
 
 #endif /*LIBRARY_H_*/

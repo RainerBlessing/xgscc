@@ -1,5 +1,7 @@
 #ifndef LEXER_H_
 #define LEXER_H_
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -12,11 +14,24 @@ struct Token
 	int line;
 };
 
+/** What the source defined and included, for the library. */
+struct LexInfo
+{
+	std::set<std::string> includes;				// the names of all #include lines that were read: "stdint.h", "xgs.h", ...
+	std::map<std::string, std::vector<Token> > macros;	// the macros that are defined at the end: name -> replacement
+};
+
 /**
- * Cuts C source into tokens, the last one is END. Comments and #include lines
- * are dropped, #define and #undef are carried out (names only, no parameters).
- * Throws CompileError.
+ * Cuts C source into tokens, the last one is END. Comments are dropped and the
+ * preprocessor is carried out: #define (with and without parameters), #undef, #if,
+ * #ifdef, #ifndef, #elif, #else, #endif, #error and #include. #include <name> is built
+ * in (stdint.h, xgs.h), #include "file" reads the file from includeDir (without a
+ * directory it is ignored). The line number of a token in an included file is the line
+ * in that file. info, if given, gets the includes and macros. Throws CompileError.
  */
+std::vector<Token> tokenize(const std::string& source, const std::string& includeDir, LexInfo* info);
+
+/** tokenize(source, "", NULL) */
 std::vector<Token> tokenize(const std::string& source);
 
 #endif /*LEXER_H_*/

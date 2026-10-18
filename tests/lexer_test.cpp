@@ -82,10 +82,10 @@ TEST(LexerTest, IgnoresIncludeLines) {
     EXPECT_EQ("a b", texts("#include <stdint.h>\na\n#include \"x.h\"\nb"));
 }
 
-TEST(LexerTest, OtherDirectivesAreNotSupportedYet) {
-    CompileError error = errorOf("a\n#ifdef X\n");
+TEST(LexerTest, UnknownDirectivesAreRefused) {
+    CompileError error = errorOf("a\n#pragma once\n");
     EXPECT_EQ(2, error.line);
-    EXPECT_NE(std::string::npos, error.message.find("#ifdef")) << error.message;
+    EXPECT_NE(std::string::npos, error.message.find("#pragma")) << error.message;
 }
 
 // #define
@@ -128,10 +128,8 @@ TEST(LexerTest, ReplacedTokensHaveTheLineOfTheUse) {
     EXPECT_EQ(9, tokens[2].value);
 }
 
-TEST(LexerTest, DefineWithParametersIsNotSupportedYet) {
-    CompileError error = errorOf("#define F(x) x\n");
-    EXPECT_EQ(1, error.line);
-    EXPECT_NE(std::string::npos, error.message.find("parameters")) << error.message;
+TEST(LexerTest, DefineWithParametersTakesArguments) {
+    EXPECT_EQ("y = 2 ;", texts("#define F(x) x\ny = F(2);"));
 }
 
 TEST(LexerTest, DefineNeedsAName) {

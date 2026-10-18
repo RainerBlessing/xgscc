@@ -1,5 +1,6 @@
 #include "library.h"
 #include <cstdlib>
+#include <map>
 #include <sstream>
 #include "errors.h"
 #include "kernel.h"
@@ -115,60 +116,19 @@ void addXgsTileLibrary(Program* program, int columns, int rows, int tileLines)
 	addXgsHardware(program);
 }
 
-static string trim(const string& text)
+bool includes(const LexInfo& info, const string& name)
 {
-	size_t first = text.find_first_not_of(" \t\r");
-	if (first == string::npos)
-		return "";
-	return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+	return info.includes.count(name) != 0;
 }
 
-bool includes(const string& source, const string& name)
+bool definedNumber(const LexInfo& info, const string& name, long* value)
 {
-	istringstream in(source);
-	string line;
-	while (getline(in, line))
-	{
-		line = trim(line);
-		if (line.compare(0, 1, "#") != 0)
-			continue;
-		line = trim(line.substr(1));
-		if (line.compare(0, 7, "include") != 0)
-			continue;
-		line = trim(line.substr(7));
-		if (line == "<" + name + ">" || line == "\"" + name + "\"")
-			return true;
-	}
-	return false;
-}
-
-bool definedNumber(const string& source, const string& name, long* value)
-{
-	istringstream in(source);
-	string line;
-	int number = 0;
-	while (getline(in, line))
-	{
-		number++;
-		line = trim(line);
-		if (line.compare(0, 1, "#") != 0)
-			continue;
-		line = trim(line.substr(1));
-		if (line.compare(0, 6, "define") != 0)
-			continue;
-		line = trim(line.substr(6));
-		if (line.compare(0, name.size(), name) != 0 || line.size() == name.size() || (line[name.size()] != ' ' && line[name.size()] != '\t'))
-			continue;
-		string text = trim(line.substr(name.size()));
-		size_t comment = text.find("//");
-		if (comment != string::npos)
-			text = trim(text.substr(0, comment));
-		char* end = NULL;
-		long result = strtol(text.c_str(), &end, 0);
-		if (text.empty() || *end != '\0')
-			throw CompileError(number, name + " must be a number");
-		*value = result;
-		return true;
-	}
-	return false;
+	map<string, vector<Token> >::const_iterator found = info.macros.find(name);
+	if (found == info.macros.end())
+		return false;
+	const vector<Token>& body = found->second;
+	if (body.size() != 1 || body[0].type != Token::NUMBER)
+		throw CompileError(body.empty() ? 1 : body[0].line, name + " must be a number");
+	*value = body[0].value;
+	return true;
 }
