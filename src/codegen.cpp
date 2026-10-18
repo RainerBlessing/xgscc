@@ -3105,11 +3105,6 @@ namespace
 			}
 
 			// the most used places first: they get the direct registers, then the first bank
-			vector<int> addressesInOrder;
-			for (int a = DIRECT_FIRST; a <= DIRECT_LAST; a++)
-				addressesInOrder.push_back(a);
-			for (int a = BANKED_FIRST; a <= BANKED_LAST; a++)
-				addressesInOrder.push_back(a);
 			vector<pair<int, size_t> > byUse;		// -weight, place: sorts the heaviest first, stable
 			for (size_t p = 0; p < places.size(); p++)
 			{
@@ -3119,16 +3114,108 @@ namespace
 				byUse.push_back(make_pair(-weight, p));
 			}
 			sort(byUse.begin(), byUse.end());
-			for (size_t rank = 0; rank < byUse.size(); rank++)
+			size_t directCount = DIRECT_LAST - DIRECT_FIRST + 1;
+			vector<int> placeAddress(places.size(), 0);
+			for (size_t rank = 0; rank < byUse.size() && rank < directCount; rank++)
+				placeAddress[byUse[rank].second] = DIRECT_FIRST + (int) rank;
+
+			// The rest go into the banks. A bank instruction is needed where the code goes from
+			// a variable in one bank to one in another, so places that are used one after the
+			// other want to be in the same bank: count those pairs in the code and put every
+			// place (heaviest first) into the bank that holds most of its partners.
+			map<string, size_t> placeOf;
+			for (size_t p = 0; p < places.size(); p++)
 			{
-				const vector<string>& labels = places[byUse[rank].second];
+				for (size_t l = 0; l < places[p].size(); l++)
+					placeOf[places[p][l]] = p;
+			}
+			set<size_t> direct;
+			for (size_t rank = 0; rank < byUse.size() && rank < directCount; rank++)
+				direct.insert(byUse[rank].second);
+			map<pair<size_t, size_t>, int> partners;
+			for (size_t f = 0; f < reachable.size(); f++)
+				countPartners(functions[reachable[f]].code.str(), placeOf, direct, &partners);
+			countPartners(mainFunction->code.str(), placeOf, direct, &partners);
+			countPartners(initialization.str(), placeOf, direct, &partners);
+			for (size_t f = 0; f < reachable.size(); f++)
+				countPartners(functions[reachable[f]].initialization.str(), placeOf, direct, &partners);
+
+			int lastBank = (lowerCursor - 1) / 16;
+			vector<int> next(lastBank + 1, 0);
+			vector<int> room(lastBank + 1, 0);
+			vector<vector<size_t> > members(lastBank + 1);
+			for (int bank = 1; bank <= lastBank; bank++)
+			{
+				next[bank] = bank * 16;
+				room[bank] = min(bank * 16 + 15, lowerCursor - 1) - bank * 16 + 1;
+			}
+			for (size_t rank = directCount; rank < byUse.size(); rank++)
+			{
+				size_t place = byUse[rank].second;
+				int best = -1;
+				int bestScore = -1;
+				for (int bank = 1; bank <= lastBank; bank++)
+				{
+					if (room[bank] <= 0)
+						continue;
+					int score = 0;
+					for (size_t m = 0; m < members[bank].size(); m++)
+					{
+						map<pair<size_t, size_t>, int>::const_iterator found = partners.find(make_pair(min(place, members[bank][m]), max(place, members[bank][m])));
+						if (found != partners.end())
+							score += found->second;
+					}
+					if (score > bestScore || (score == bestScore && room[bank] > room[best]))
+					{
+						best = bank;
+						bestScore = score;
+					}
+				}
+				if (best < 0)
+					throw CompileError(mainFunction->line, "out of RAM: no place left for " + describeLabel(places[place][0]));
+				placeAddress[place] = next[best]++;
+				room[best]--;
+				members[best].push_back(place);
+			}
+			for (size_t p = 0; p < places.size(); p++)
+			{
+				const vector<string>& labels = places[p];
 				for (size_t l = 0; l < labels.size(); l++)
 				{
-					(*addresses)[labels[l]] = addressesInOrder[rank];
-					if (pinned.count(labels[l]) && addressesInOrder[rank] >= BANKED_FIRST)
+					(*addresses)[labels[l]] = placeAddress[p];
+					if (pinned.count(labels[l]) && placeAddress[p] >= BANKED_FIRST)
 						throw CompileError(mainFunction->line, "there are not enough direct registers for " + describeLabel(labels[l]) +
 							": the six registers 0x0A-0x0F are taken by the registers of assembler routines and acc_hi and acc_lo");
 				}
+			}
+		}
+
+		// "@bank a" followed by "@bank b" in straight code: a and b are partners (a label, a call
+		// and the places in direct registers, which need no bank, break the row)
+		static void countPartners(const string& code, const map<string, size_t>& placeOf, const set<size_t>& direct, map<pair<size_t, size_t>, int>* partners)
+		{
+			istringstream in(code);
+			string line;
+			bool known = false;
+			size_t previous = 0;
+			while (getline(in, line))
+			{
+				size_t first = line.find_first_not_of(' ');
+				if (first == string::npos)
+					continue;
+				string text = line.substr(first);
+				if (text.compare(0, 6, "@bank ") == 0)
+				{
+					map<string, size_t>::const_iterator found = placeOf.find(text.substr(6));
+					if (found == placeOf.end() || direct.count(found->second))
+						continue;
+					if (known && previous != found->second)
+						(*partners)[make_pair(min(previous, found->second), max(previous, found->second))]++;
+					previous = found->second;
+					known = true;
+				}
+				else if ((text[text.size() - 1] == ':' && text.compare(0, 2, "_C") != 0) || text.compare(0, 5, "call ") == 0)
+					known = false;
 			}
 		}
 

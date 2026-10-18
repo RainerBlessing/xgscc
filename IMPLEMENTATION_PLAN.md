@@ -274,8 +274,10 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
 1. **5a** peephole optimizer (`src/optimizer.cpp`, `-O0`/`-O1`, default `-O1`): `or w, #0`
    after `mov w, reg`, unused labels, jump to next, jump threading, dead code, double
    `bank`, and bank tracking over the control flow (calls, labels, FSR writes). Every run
-   test runs at both levels and compares the RAM. Result: pong's C code 695 -> 669 words
-   (-3.7 %), far from the 20 % of the success criterion; see below.
+   test runs at both levels and compares the RAM. Bank tracking also follows calls (the
+   bank in which a function returns). In the allocator the variables that are used one
+   after the other are put into the same bank. Result: pong's C code 695 -> 653 words
+   (-6 %), the whole ROM 1210 -> 1166 words; see 5d.
    Status: Complete
 2. **5b** a real preprocessor in the lexer: macros with parameters, `#if` family with
    expressions and `defined`, `#error`, `#include "file"`; the library reads its
@@ -287,9 +289,15 @@ is 5080 cycles, a frame about 1.33 million (60 Hz); the example programs have 20
    without), the listing shows each group of words under its C line, library and runtime
    code under its name. The line numbers carry the file in their upper bits, so errors and
    listings of included files name the right file. Status: Complete
-4. **5d** README review and the size goal: what else makes code smaller (bank-aware
-   allocation, page words, calling convention). Status: Not Started
-**Status**: In Progress (5d next)
+4. **5d** README review (optimizer section, preprocessor, listing, `.obj`) and the size
+   goal. **The 20 % of the success criterion was not reached**: the peephole rules and
+   bank handling give 6 % on the C code of pong (3.6 % of the ROM, which also holds the
+   video kernel and the 256 byte tile table). What is left is the shape of the code
+   (every call is 2-3 words per argument, every comparison 4 words, 76 `bank` words
+   after calls that change the bank). Further steps would be inlining of small functions
+   and register passing of arguments; not started.
+   Status: Complete
+**Status**: Complete, except for the size goal above
 
 ## Open questions
 

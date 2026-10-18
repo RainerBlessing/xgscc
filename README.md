@@ -126,9 +126,10 @@ whole program is known:
   of the XGS ME use them, too). The variables, parameters and temporaries (118 bytes) live
   in the lower part, because a bank is selected with `bank n`, which does not touch bit
   7 of FSR. A banked byte is reached through the bank that FSR selects; the compiler
-  writes `bank n` only where the bank is not already selected (unknown after a label
-  and after a call). The most used variables (uses in loops count eight times more per
-  level) get the direct registers, which need no `bank`, then the first bank, and so on.
+  writes `bank n` only where the bank is not already selected (see "The optimizer").
+  The most used variables (uses in loops count eight times more per level) get the
+  direct registers, which need no `bank`; the others are put into the banks so that
+  variables that are used one after the other share a bank.
 - **Arrays** are only reached through FSR and fill the RAM from the top: first the
   upper half (127 bytes, the last byte stays free so that the address behind the end of
   an array fits into a pointer), then on into the lower half. A pointer into the upper
@@ -174,6 +175,27 @@ reports it as a program that is too big for the ROM.
 The start code (`org fff`, `jmp _start`) initializes the globals and the static
 variables and falls into the code of `main`. When `main` ends the
 program loops on a `jmp` to itself.
+
+## The optimizer
+
+`-O1` (the default) works on the assembler text before it is assembled; `-O0` leaves
+it as the code generator wrote it (`examples/pong.c` is 1198 words at `-O0`, 1166 at
+`-O1`; the C code of it, without the video kernel and the tile table, 685 and 653).
+The rules, each with a test:
+
+- `or w, #0` right after `mov w, reg` (which sets the zero flag itself);
+- jumps to the next instruction, jumps to jumps, code behind a jump or `retp`, labels
+  of the code generator that nothing uses;
+- a `bank n` where every way to it has selected bank `n` already. This follows the
+  control flow: at a label the banks of all jumps and of the fall-through must agree,
+  a function starts in the bank of all its calls and leaves the bank in which it
+  returns (so a call does not forget the bank), and a write to FSR or a routine in
+  assembler makes it unknown.
+
+Every program of the tests runs at both levels and has to leave the same RAM behind.
+The routines in assembler (the video kernel) are not touched. What is not done:
+inlining, constant propagation, anything across statements except the banks; the
+generated code keeps the shape of the C source.
 
 ## The video
 

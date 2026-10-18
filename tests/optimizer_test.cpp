@@ -147,9 +147,30 @@ TEST(OptimizerBankTest, AfterResetTheBankIsZero) {
               optimize(lines({"        org fff", "        jmp _start", "        org 0", "_start:", "        bank 0", "        mov w, x"})));
 }
 
-TEST(OptimizerBankTest, NothingIsKnownAfterACall) {
-    std::string text = lines({"_start:", "        bank 1", "        call f_a", "        bank 1", "        mov w, x", "f_a:", "        retp"});
+TEST(OptimizerBankTest, NothingIsKnownAfterACallOfAFunctionThatChangesTheBank) {
+    std::string text = lines({"_start:", "        bank 1", "        call f_a", "        bank 1", "        mov w, x", "        retp", "f_a:", "        bank 2", "        retp"});
     EXPECT_EQ(text, optimize(text));
+}
+
+TEST(OptimizerBankTest, AfterACallTheBankIsThatOfTheEndOfTheFunction) {
+    std::string text = lines({"_start:", "        call f_a", "        bank 2", "        mov w, x", "        retp", "f_a:", "        bank 2", "        mov w, y", "        retp"});
+    std::string result = optimize(text);
+    EXPECT_EQ(std::string::npos, result.find("        bank 2\n        mov w, x")) << result;
+}
+
+TEST(OptimizerBankTest, AFunctionWithTwoExitsInDifferentBanksLeavesTheBankUnknown) {
+    std::string text = lines({"_start:", "        call f_a", "        bank 2", "        mov w, x", "        retp", "f_a:", "        snb status.2", "        jmp _L1", "        bank 2", "        retp", "_L1:", "        bank 3", "        retp"});
+    EXPECT_NE(std::string::npos, optimize(text).find("        bank 2\n        mov w, x"));
+}
+
+TEST(OptimizerBankTest, AfterACallOfAnAssemblerRoutineNothingIsKnown) {
+    std::string text = lines({"_start:", "        bank 1", "        call f_k", "        bank 1", "        mov w, x", "        retp", "        autopage off", "f_k:", "                retp", "        autopage on"});
+    EXPECT_NE(std::string::npos, optimize(text).find("        bank 1\n        mov w, x"));
+}
+
+TEST(OptimizerBankTest, TheExitOfAFunctionThatCallsAnotherFollowsThatCall) {
+    std::string text = lines({"_start:", "        call f_a", "        bank 2", "        mov w, x", "        retp", "f_a:", "        call f_b", "        retp", "f_b:", "        bank 2", "        retp"});
+    EXPECT_EQ(std::string::npos, optimize(text).find("        bank 2\n        mov w, x"));
 }
 
 TEST(OptimizerBankTest, AFunctionKnowsTheBankOfAllItsCallers) {

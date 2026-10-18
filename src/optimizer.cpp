@@ -372,11 +372,21 @@ namespace
 	{
 		map<string, int> in;
 		in["_start"] = 0;
+		// the bank that a function leaves selected (where it returns), and the routines in
+		// assembler, which may leave any
+		map<string, int> exits;
+		set<string> routines;
+		for (size_t i = 0; i < lines->size(); i++)
+		{
+			if ((*lines)[i].protectedLine && isLabel((*lines)[i]))
+				routines.insert(labelName((*lines)[i]));
+		}
 		vector<int> before(lines->size(), UNKNOWN);
 		for (int pass = 0; pass < 60; pass++)
 		{
 			bool changed = false;
 			int state = TOP;
+			string function;		// the function the line belongs to
 			for (size_t i = 0; i < lines->size(); i++)
 			{
 				const Line& line = (*lines)[i];
@@ -389,6 +399,8 @@ namespace
 				if (isLabel(line))
 				{
 					string name = labelName(line);
+					if (name.compare(0, 2, "f_") == 0)
+						function = name;
 					int merged = meet(state, in.count(name) ? in[name] : TOP);
 					if (!in.count(name) || in[name] != merged)
 					{
@@ -404,6 +416,7 @@ namespace
 				if (isDirective(line))
 				{
 					state = TOP;
+					function = "";
 					continue;
 				}
 				string m = mnemonic(line);
@@ -425,12 +438,25 @@ namespace
 						changed = true;
 					}
 					if (m == "call")
-						state = UNKNOWN;
+					{
+						// behind the call: what the function leaves, if it is known
+						map<string, int>::const_iterator left = exits.find(target);
+						state = routines.count(target) ? UNKNOWN : left == exits.end() ? TOP : left->second;
+					}
 					else if (!skipped)
 						state = TOP;
 				}
 				else if (m == "retp" || m == "ret")
 				{
+					if (!function.empty())
+					{
+						int merged = meet(exits.count(function) ? exits[function] : TOP, state);
+						if (!exits.count(function) || exits[function] != merged)
+						{
+							exits[function] = merged;
+							changed = true;
+						}
+					}
 					if (!skipped)
 						state = TOP;
 				}
