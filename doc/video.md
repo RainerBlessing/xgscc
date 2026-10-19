@@ -354,12 +354,13 @@ sprite with 5 copies in 3 rows.
   `x & 7` into a pair of bytes (the pixels in the cell of `x`, and in the next one), and for every cell
   the bits of the pattern of the copies (16 bits, a bit for every cell where a copy starts, made from the mask
   once before the frame) say whether the first byte, the second byte or both of a sprite go into the
-  mask of the next cell. This is why the cell on the left cannot have sprites: the masks of a cell are made in the
-  one before it. Overlapping sprites in a cell share its colour.
+  mask of the next cell. The first cell of a line has no cell in front of it to be made in: the sprite routine
+  puts the shape and colour of a copy that starts there into two bytes of RAM (`xgs_m0`, `xgs_k0`), from
+  which the start of the line takes the first mask. Overlapping sprites in a cell share its colour.
 - The work for the sprites of a line (the line in the sprite, the row of the image with 2 `iread`, the
   shift in 3 steps of 4, 2 and 1 pixels that do their part or nothing in the same cycles, the pattern of
   the row of copies) is one routine for all sprites, entered from a place for each and left through a
-  jump back to it, about 150 cycles per sprite. It runs in the stretches of the start of a line that
+  jump back to it, about 165 cycles per sprite. It runs in the stretches of the start of a line that
   are free (118, 374, 46, 198, 123 cycles between the sync, burst and porch writes), and the
   generator puts the sprites there where they fit: 3 is what fits.
 - The generator counts every instruction (class `Piece`) and pads with delays to the planned
@@ -369,22 +370,35 @@ sprite with 5 copies in 3 rows.
 
 | | |
 |---|---|
-| kernel | 431 words for 1 sprite, 464 for 2, 493 for 3 (1 row of copies, 1 line per pixel row; 497 for the example: 3 rows, 4 lines); a page has 512 |
-| RAM | `8 + 3 * rows` bytes per sprite, 7 for the kernel |
-| time before the frame | 357 cycles (1 sprite), 799 (3, 1 row), 2155 (3, 3 rows), 3511 (3, 5 rows); inside the time of the game |
+| kernel | 445 words for 1 sprite, 477 for 2, 503 for 3 (1 row of copies, 1 line per pixel row; 505 for the example: 3 rows, 4 lines); a page has 512. 3 sprites need 14 or 15 columns |
+| RAM | `8 + 3 * rows` bytes per sprite, 9 for the kernel |
+| time before the frame | 357 cycles (1 sprite), 799 (3, 1 row), 2155 (3, 3 rows), 3511 (3, 5 rows) for the patterns of the copies, inside the time of the game; the rest of the wait for the frame is done by the same routine (the wraps of the RTCC), the kernel does the last part, which makes it shorter |
 | frame | 1 330 956 cycles ±5 and the vertical sync of 19 283 cycles, like the tile kernel (checked in the tests) |
+
+The kernel with 3 sprites only fits on a page for some settings (XGS_SPRITES 3, 1 to 5 rows of copies
+as far as 8 * rows * lines is at most 255):
+
+| columns | lines per pixel row (`XGS_SPRITE_LINES`) that fit |
+|---|---|
+| 14, 15 | 1, 2, 4, 8 |
+| 13 | 1, 2, 4 |
+| 6, 7, 12 | 1 |
+| 2 to 5, 8 to 11 | none |
+
+With 1 or 2 sprites every number of columns fits. The kernel and `xgs_sprite_update` each begin on a page
+of the ROM (`samepage`), which can leave up to about 500 words in front of them unused.
 
 ### Test
 
 `tests/sprites_test.cpp` runs programs on the emulated SX52 and compares **every write to RE of a frame**,
 value and cycle, with a model of the picture that is written separately: the tile map, the image tables, and
 for every line the copies, the shift, the pixel rows (1 to 8 lines), the rows of copies, the priority of
-up to 3 sprites, the edges of the picture and the cell on the left. It also moves a sprite and changes
+up to 3 sprites, the edges of the picture (also the cell on the left and the top, where a sprite that is below the picture comes in again). It also moves a sprite and changes
 a mask from frame to frame, and checks that errors of the setup are said.
 
 ### Not done
 
-More than 3 sprites (another 150 cycles per sprite do not fit before the first cell), shots and bombs as
-cheaper objects, a sprite in the cell on the left, a colour for every pixel (the colour is one per
+More than 3 sprites (another 165 cycles per sprite do not fit before the first cell), shots and bombs as
+cheaper objects, a colour for every pixel (the colour is one per
 row of the image and cell), collision in the kernel (the C code can compare the positions), a
 combination with the hi-res tiles.

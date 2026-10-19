@@ -91,11 +91,11 @@ void xgsCheckSprites(const SpriteConfig& config);
  * xgs_tiles) with up to XGS_MAX_SPRITES sprites on top. Every cell has 8 pixels that are either the
  * colour of the tile or, where the shape of a sprite has a set bit, the colour of the sprite. A sprite
  * is a bitmap of 8 pixels for every one of its 8 pixel rows (table xgs_sprite_images: 16 bytes for
- * an image, shape and colour of 8 rows), at x (the pixel of the first copy; the cell on the left of
- * the picture is free of sprites, so x is at least 8), y (the first line), with copies every
+ * an image, shape and colour of 8 rows), at x (the pixel of the first copy, 0 to 8 * columns - 1), y (the
+ * first line; the lines count modulo 256), with copies every
  * config.step cells and a mask for them. {o}, {bg}, {col}, {no}, {acc_hi} and {acc_lo} are the
  * registers; the arrays are xgs_map, xgs_sprites and, one byte each, xgs_ln, xgs_s, xgs_r, xgs_mp,
- * xgs_cnt, xgs_up, xgs_ret. A line takes the same 5080 cycles as always, the cells are 8 writes each.
+ * xgs_cnt, xgs_up, xgs_ret, xgs_m0, xgs_k0. A line takes the same 5080 cycles as always, the cells are 8 writes each.
  */
 std::string xgsSpriteFrameSource(const SpriteConfig& config);
 

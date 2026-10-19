@@ -127,8 +127,10 @@ namespace
 
 namespace
 {
-	// The wait from the end of the last picture line to the start of the next frame.
-	void waitForFrame(Kernel& k, int lines)
+	// The wait from the end of the last picture line to the start of the next frame. part is 1 for the
+	// wraps of the RTCC only (they can be waited for by another routine before the kernel is called), 2
+	// for the rest, 3 for all of it.
+	void waitForFrame(Kernel& k, int lines, int part = 3)
 	{
 		const string r = k.counterRegister();
 	// The time from the end of the last picture line to the next vertical sync:
@@ -141,7 +143,7 @@ namespace
 
 	// One register counts the wraps of the RTCC, then the ticks, then the rounds
 	// of the delay loops.
-	if (ticks / 256 > 0)
+	if (ticks / 256 > 0 && (part & 1))
 	{
 		k.comment("wait: the high part of the ticks, in wraps of the RTCC");
 		k.line("mov w, #" + hexText(ticks / 256));
@@ -158,6 +160,8 @@ namespace
 		k.line("decsz " + r);
 		k.line("jmp xgs_wrap");
 	}
+	if (!(part & 2))
+		return;
 	k.comment("the low part of the ticks");
 	k.line("mov w, #" + hexText(ticks % 256));
 	k.line("mov " + r + ", w");
@@ -498,6 +502,12 @@ namespace
 			cycles += n;
 		}
 
+		// text of code that has no cycles to count (the routine is not timed)
+		void raw(const string& text)
+		{
+			out << text;
+		}
+
 		void jump(const string& target)
 		{
 			ins("jmp " + target, 3);
@@ -696,7 +706,7 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	const string T = "{acc_lo}";		// the register of the delay loops and of the temporaries
 
 	Kernel k(T);
-	waitForFrame(k, lines);
+	waitForFrame(k, lines, 2);
 	k.comment("the vertical sync; the state of the lines is set up in it");
 	k.write(SYNC_LEVEL);
 	string source = k.text();
@@ -748,6 +758,8 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	book.address("xgs_up", 0);
 	book.ins("mov w, #v_xgs_sprites");
 	book.ins("mov indf, w");
+	book.address("xgs_m0", 0);
+	book.ins("clr indf");					// nothing in the first cell yet
 
 	// ---- one sprite in this line: the pixel row, the shifted bitmap, the pattern of the copies ----
 	// One routine for all of them, entered from a place for each sprite (the number is in xgs_ret),
@@ -809,6 +821,7 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("mov w, " + O);
 	sub.ins("iread", 4);
 	sub.ins("mov " + O + ", w");				// the colour
+	sub.ins("mov " + BG + ", w");
 	sub.ins("mov w, " + NC);
 	sub.ins("and " + NO + ", w");				// no sprite in this line: nothing to show
 	sub.seek(&at, layout.state + 4);
@@ -826,6 +839,8 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("mov w, indf");
 	sub.ins("and w, " + NC);
 	sub.ins("mov " + COL + ", w");
+	sub.ins("mov w, " + O);
+	sub.ins("mov " + NC + ", w");				// the low byte of the pattern, for its bit 0
 	sub.address("xgs_up", 0);
 	sub.ins("mov w, indf");
 	sub.ins("mov fsr, w");
@@ -868,6 +883,13 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("inc fsr");
 	sub.ins("mov w, " + O);
 	sub.ins("mov indf, w");
+	// the copy that starts in the first cell (bit 0 of the pattern) puts its shape and colour there
+	sub.address("xgs_m0", 0);
+	sub.ins("mov w, " + NO);
+	sub.skip("snb " + NC + ".0", "or indf, w");
+	sub.address("xgs_k0", 0);
+	sub.ins("mov w, " + BG);
+	sub.skip("snb " + NC + ".0", "mov indf, w");
 	sub.address("xgs_up", 0);
 	sub.ins("mov w, #" + hexText(layout.size));
 	sub.ins("clrb status.0");
@@ -911,8 +933,45 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 		places.push_back(std::move(p));
 	}
 
-	// the first cell of the line: tile colour, no sprite (the cell on the left is free of them)
+	// One sprite into the masks of the next cell. The pattern of the copies shifts one cell to the
+	// right: bit 1 is a copy that starts in the next cell, bit 0 one that started in this one. Where
+	// there is a copy the sprite colour is set, the bitmap bytes of the sprite go into the mask.
+	// FSR is at the state of the sprite and moves on to the state of the next one.
+	auto composite = [&](Piece& p)
+	{
+		p.ins("mov w, indf");
+		p.ins("mov " + T + ", w");
+		p.ins("inc fsr");
+		p.ins("clrb status.0");
+		p.ins("rr indf");
+		p.ins("dec fsr");
+		p.ins("rr indf");
+		p.ins("inc fsr");
+		p.ins("inc fsr");
+		p.ins("mov w, indf");
+		p.skip("snb " + T + ".1", "or " + NO + ", w");
+		p.ins("inc fsr");
+		p.ins("mov w, indf");
+		p.skip("snb " + T + ".0", "or " + NO + ", w");
+		p.ins("inc fsr");
+		p.ins("mov w, indf");
+		p.skip("snb " + T + ".1", "mov " + NC + ", w");
+		p.skip("snb " + T + ".0", "mov " + NC + ", w");
+		// the state of the next sprite: a record further, from the colour
+		p.ins("mov w, #" + hexText(layout.size - 4));
+		p.ins("clrb status.0");
+		p.ins("add fsr, w");
+	};
+
+	// the first cell of the line: the sprites put what they have for it into xgs_m0 and xgs_k0 (the shape of the
+	// copy that starts in the first cell, and its colour), the tile colour comes from the map
 	Piece first(&labels, T);
+	first.address("xgs_m0", 0);
+	first.ins("mov w, indf");
+	first.ins("mov " + O + ", w");
+	first.address("xgs_k0", 0);
+	first.ins("mov w, indf");
+	first.ins("mov " + COL + ", w");
 	first.address("xgs_mp", 0);
 	first.ins("mov w, indf");
 	first.ins("inc indf");
@@ -926,7 +985,6 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	first.ins("mov m, #v_xgs_tiles_page");
 	first.ins("iread", 4);
 	first.ins("mov " + BG + ", w");
-	first.ins("clr " + O);
 
 	// ---- put them into the stretches between the writes of the line's prefix ----
 	vector<const Piece*> work;
@@ -977,34 +1035,7 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	gaps[0].address("xgs_sprites", 0);
 	gaps[0].seek(&cellAt, layout.state);
 	for (int u = 0; u < c.players; u++)
-	{
-		// the pattern of the copies shifts one cell to the right: bit 1 is a copy that starts in the next
-		// cell, bit 0 one that started in this one. Where there is a copy the sprite colour is set,
-		// the bitmap bytes of the sprite go into the mask of the next cell.
-		Piece& p = gaps[1 + u];
-		p.ins("mov w, indf");
-		p.ins("mov " + T + ", w");
-		p.ins("inc fsr");
-		p.ins("clrb status.0");
-		p.ins("rr indf");
-		p.ins("dec fsr");
-		p.ins("rr indf");
-		p.ins("inc fsr");
-		p.ins("inc fsr");
-		p.ins("mov w, indf");
-		p.skip("snb " + T + ".1", "or " + NO + ", w");
-		p.ins("inc fsr");
-		p.ins("mov w, indf");
-		p.skip("snb " + T + ".0", "or " + NO + ", w");
-		p.ins("inc fsr");
-		p.ins("mov w, indf");
-		p.skip("snb " + T + ".1", "mov " + NC + ", w");
-		p.skip("snb " + T + ".0", "mov " + NC + ", w");
-		// the state of the next sprite: a record further, from the colour
-		p.ins("mov w, #" + hexText(layout.size - 4));
-		p.ins("clrb status.0");
-		p.ins("add fsr, w");
-	}
+		composite(gaps[1 + u]);
 	// behind the last pixel: the next cell is the one that the work was done for
 	Piece& next = gaps[7];
 	next.address("xgs_mp", 0);
@@ -1213,6 +1244,10 @@ string xgsSpriteUpdateSource(const SpriteConfig& c)
 	p.address("xgs_ln", 0);
 	p.ins("decsz indf");
 	p.jump(unit);
+	// the wraps of the RTCC of the wait for the frame: the kernel only waits for the rest, so it is shorter
+	Kernel waiting(T);
+	waitForFrame(waiting, c.rows * c.tileLines, 1);
+	p.raw(waiting.text());
 	p.ins("clrb fsr.7");
 	p.ins("retp", 0);
 	return p.text();

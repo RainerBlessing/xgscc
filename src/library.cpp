@@ -170,7 +170,7 @@ void addXgsSpriteLibrary(Program* program, const SpriteConfig& c)
 	text << "typedef unsigned char uint8_t;\n"
 		"uint8_t xgs_map[" << c.columns * c.rows << "];\n"
 		"uint8_t xgs_sprites[" << c.players * record << "];\n"
-		"uint8_t xgs_ln[1];\nuint8_t xgs_s[1];\nuint8_t xgs_r[1];\nuint8_t xgs_mp[1];\nuint8_t xgs_cnt[1];\nuint8_t xgs_up[1];\nuint8_t xgs_ret[1];\n"
+		"uint8_t xgs_ln[1];\nuint8_t xgs_s[1];\nuint8_t xgs_r[1];\nuint8_t xgs_mp[1];\nuint8_t xgs_cnt[1];\nuint8_t xgs_up[1];\nuint8_t xgs_ret[1];\nuint8_t xgs_m0[1];\nuint8_t xgs_k0[1];\n"
 		"void xgs_tile(uint8_t x, uint8_t y, uint8_t tile) { xgs_map[y * " << c.columns << " + x] = tile " << (powerOfTwo ? "<< " : "* ") << (powerOfTwo ? shift : c.tileLines) << "; }\n"
 		"uint8_t xgs_get_tile(uint8_t x, uint8_t y) { return xgs_map[y * " << c.columns << " + x] " << (powerOfTwo ? ">> " : "/ ") << (powerOfTwo ? shift : c.tileLines) << "; }\n"
 		"void xgs_sprite(uint8_t n, uint8_t x, uint8_t y, uint8_t image) {\n"

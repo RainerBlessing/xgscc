@@ -6,7 +6,7 @@
 //
 // A sprite is a bitmap of 8 x 8 pixels from the table xgs_sprite_images, with a colour for every pixel
 // row. A cell of the map has 8 pixels, so a cell is as wide as a sprite; x counts these pixels (0 to
-// 119), and the cell on the left is free of sprites (x is at least 8). A pixel row is
+// 119); the sprites reach both edges of the picture. A pixel row is
 // XGS_SPRITE_LINES lines, the rows of copies follow each other without a gap.
 #include <stdint.h>
 #define XGS_COLUMNS 15
@@ -63,11 +63,9 @@ uint8_t frames;
 uint8_t alien_x;
 uint8_t alien_y;
 uint8_t going_right;
-uint8_t frame_of_alien;
 uint8_t cannon_x;
 uint8_t shot_x;
-uint8_t shot_y;
-uint8_t shot_flies;
+uint8_t shot_y;             // 0: no shot
 
 void shoot(void)
 {
@@ -79,7 +77,7 @@ void shoot(void)
         uint8_t mask = xgs_sprites[3 + row];       // the masks of the first sprite are bytes 3, 4, 5 of its record
         if (mask & (1 << copy)) {
             xgs_sprite_copies(ALIENS, row, mask & ~(1 << copy));
-            shot_flies = 0;
+            shot_y = 0;
         }
     }
 }
@@ -108,7 +106,7 @@ void main(void)
         frames++;
         buttons = xgs_joystick();
 
-        if ((buttons & LEFT) && cannon_x > 8) {
+        if ((buttons & LEFT) && cannon_x > 0) {
             cannon_x--;
         }
         if ((buttons & RIGHT) && cannon_x < 104) {
@@ -116,27 +114,25 @@ void main(void)
         }
         xgs_sprite(CANNON, cannon_x, 200, IMAGE_CANNON);
 
-        if ((buttons & FIRE) && !shot_flies) {
-            shot_flies = 1;
-            shot_x = cannon_x + 0;
+        if ((buttons & FIRE) && shot_y == 0) {
+            shot_x = cannon_x;
             shot_y = 196;
         }
-        if (shot_flies) {
+        if (shot_y) {
             shot_y -= 4;
             if (shot_y < 8) {
-                shot_flies = 0;
+                shot_y = 0;
             } else {
                 shoot();
             }
         }
-        if (shot_flies) {
+        if (shot_y) {
             xgs_sprite(SHOT, shot_x, shot_y, IMAGE_SHOT);
         }
-        xgs_sprite_copies(SHOT, 0, shot_flies);
+        xgs_sprite_copies(SHOT, 0, shot_y != 0);
 
         // the formation steps sideways and down every 8 frames, the invaders change their legs
         if ((frames & 7) == 0) {
-            frame_of_alien ^= 1;
             if (going_right) {
                 if (alien_x >= 48) {
                     going_right = 0;
@@ -145,7 +141,7 @@ void main(void)
                     alien_x += 2;
                 }
             } else {
-                if (alien_x <= 10) {
+                if (alien_x <= 2) {
                     going_right = 1;
                     alien_y += 8;
                 } else {
@@ -155,7 +151,7 @@ void main(void)
             if (alien_y > 80) {
                 alien_y = 12;
             }
-            xgs_sprite(ALIENS, alien_x, alien_y, IMAGE_ALIEN_A + frame_of_alien);
+            xgs_sprite(ALIENS, alien_x, alien_y, IMAGE_ALIEN_A + ((frames >> 3) & 1));
         }
     }
 }
