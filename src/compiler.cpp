@@ -99,6 +99,17 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 			bool tiles = definedNumber(info, "XGS_COLUMNS", &columns);
 			tiles = definedNumber(info, "XGS_ROWS", &rows) || tiles;
 			tiles = definedNumber(info, "XGS_TILE_LINES", &tileLines) || tiles;
+			long pixels = 0;
+			bool hires = definedNumber(info, "XGS_PIXELS", &pixels);
+			long sprites = 0;
+			bool hasSprites = definedNumber(info, "XGS_SPRITES", &sprites);
+			long spriteRows = 1;
+			long spriteStep = 2;
+			long spriteLines = 1;
+			definedNumber(info, "XGS_SPRITE_ROWS", &spriteRows);
+			definedNumber(info, "XGS_SPRITE_STEP", &spriteStep);
+			definedNumber(info, "XGS_SPRITE_LINES", &spriteLines);
+			tiles = tiles || hires || hasSprites;
 			if (lines < 1 || lines > 255)
 				throw CompileError(1, "XGS_LINES has to be a number from 1 to 255");
 			if (colour < 0 || colour > 255)
@@ -113,7 +124,17 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 					throw CompileError(1, "XGS_TILE_LINES has to be a number from 1 to 255");
 				if (rows * tileLines > 255)
 					throw CompileError(1, "XGS_ROWS times XGS_TILE_LINES is " + to_string(rows * tileLines) + ": the picture has at most 255 lines");
-				addXgsTileLibrary(&program, (int) columns, (int) rows, (int) tileLines);
+				if (hasSprites && hires)
+					throw CompileError(1, "XGS_SPRITES and XGS_PIXELS cannot be used together: the sprites have their own pixels");
+				if (hasSprites)
+				{
+					SpriteConfig config = { (int) columns, (int) rows, (int) tileLines, (int) sprites, (int) spriteRows, (int) spriteStep, (int) spriteLines };
+					addXgsSpriteLibrary(&program, config);
+				}
+				else if (hires)
+					addXgsHiresLibrary(&program, (int) columns, (int) rows, (int) tileLines, (int) pixels);
+				else
+					addXgsTileLibrary(&program, (int) columns, (int) rows, (int) tileLines);
 			}
 			else
 				addXgsLibrary(&program, (int) lines, (int) colour);

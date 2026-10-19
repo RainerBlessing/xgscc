@@ -44,6 +44,68 @@ std::string xgsFrameSource(int lines, int colour);
  */
 std::string xgsTileFrameSource(int columns, int rows, int tileLines);
 
+/** The fastest pixel clock of the hi-res tiles: the cycles between two pixels (see xgsHiresFrameSource). */
+const int XGS_HIRES_MIN_PITCH = 42;
+
+/**
+ * xgs_frame() for hi-res tiles: every cell of the map is 8 pixel rows of up to 8 pixels,
+ * drawn with a shape and a colour for every pixel row (the picture is columns * pixels pixels
+ * wide). The map is the array xgs_map (one byte per tile: the tile number). The graphics are
+ * the table xgs_tiles: for every tile 8 pairs of bytes, the shape (bit 7 is the left pixel,
+ * a set bit is a pixel of the colour) and the colour (a value for RE); the other pixels are
+ * black. The pairs of tile t are at 16 * t, the first of them is the top pixel row. A pixel
+ * row is drawn in tileLines / 8 lines. {s}, {sh}, {col}, {acc_hi} and {acc_lo} are the
+ * registers. Every pixel is XGS_TILE_AREA / (columns * pixels) cycles wide, at least
+ * XGS_HIRES_MIN_PITCH.
+ */
+std::string xgsHiresFrameSource(int columns, int rows, int tileLines, int pixels);
+
+/** The most sprites of the sprite kernel: every one takes about 150 cycles in the start of a line (374, 198 and 118 cycles are free between its writes). */
+const int XGS_MAX_SPRITES = 3;
+/** The widest picture and the narrowest pixel of the sprite kernel: 8 pixels in every cell, 34 cycles wide with 15 columns. */
+const int XGS_SPRITE_MAX_COLUMNS = 15;
+const int XGS_SPRITE_MIN_PITCH = 32;
+
+/** What the sprite kernel is made for (XGS_COLUMNS, XGS_ROWS, XGS_TILE_LINES, XGS_SPRITES, XGS_SPRITE_ROWS, XGS_SPRITE_STEP, XGS_SPRITE_LINES). */
+struct SpriteConfig
+{
+    int columns;
+    int rows;
+    int tileLines;
+    int players;        // sprites
+    int spriteRows;     // copies of a sprite below each other (a mask of copies for each row)
+    int step;           // cells from one copy to the next
+    int pixelLines;     // lines of a pixel row of a sprite: 1, 2, 4 or 8
+};
+
+/**
+ * The bytes of a record of the table xgs_sprites: x, y, image * 16, the mask of every row of copies,
+ * the 16 bit pattern of every row (made by xgs_sprite_update) and 5 bytes of state of the kernel.
+ */
+int xgsSpriteRecord(int spriteRows);
+/** Throws a CompileError if the sprite kernel cannot be made for this configuration. */
+void xgsCheckSprites(const SpriteConfig& config);
+
+/**
+ * xgs_sprite_frame(): xgs_frame() for the tile map with sprites: the tiles of the map (xgs_map,
+ * xgs_tiles) with up to XGS_MAX_SPRITES sprites on top. Every cell has 8 pixels that are either the
+ * colour of the tile or, where the shape of a sprite has a set bit, the colour of the sprite. A sprite
+ * is a bitmap of 8 pixels for every one of its 8 pixel rows (table xgs_sprite_images: 16 bytes for
+ * an image, shape and colour of 8 rows), at x (the pixel of the first copy; the cell on the left of
+ * the picture is free of sprites, so x is at least 8), y (the first line), with copies every
+ * config.step cells and a mask for them. {o}, {bg}, {col}, {no}, {acc_hi} and {acc_lo} are the
+ * registers; the arrays are xgs_map, xgs_sprites and, one byte each, xgs_ln, xgs_s, xgs_r, xgs_mp,
+ * xgs_cnt, xgs_up, xgs_ret. A line takes the same 5080 cycles as always, the cells are 8 writes each.
+ */
+std::string xgsSpriteFrameSource(const SpriteConfig& config);
+
+/**
+ * xgs_sprite_update(): the patterns of the copies (in xgs_sprites) from x and the masks. Called
+ * before every frame, takes a few thousand cycles. {o}, {bg}, {col}, {no}, {acc_hi} and {acc_lo}
+ * are the registers.
+ */
+std::string xgsSpriteUpdateSource(const SpriteConfig& config);
+
 /** xgs_joystick(): the buttons (0x01 up, 0x02 down, 0x04 left, 0x08 right, 0x10 fire; 1 = pressed). */
 std::string xgsJoystickSource();
 /** xgs_sound(address, data): one command to the sound chip. Parameters {address} and {data}. */

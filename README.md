@@ -164,7 +164,9 @@ assembler puts `page` where code and its jump or call target are on different
 pages of 512 words, and where code runs on into the next page. A called function
 starts at the beginning of a page or in the first half of one (a `call` reaches no
 further) and ends with `retp`, which gives the page back. `page` costs a cycle;
-the video code of stage 4 will be written without it.
+the video code is written without it. A routine in assembler that has to stay on one page (the
+sprite kernel is nearly 500 words) gets a `samepage n` in front, n being its length in
+words: it moves to the next page if it would cross the border of one.
 
 The tables sit at the top of the ROM, below the reset vector, each inside one block
 of 256 words: `iread` takes the high bits of the address from MODE and the low byte
@@ -279,6 +281,69 @@ without `page` instructions, on one page, and gives it two of the direct registe
 (`0x0A-0x0F`), because a `bank` in the middle of it would change the timing. With the
 two registers of `acc_hi` and `acc_lo` that leaves two direct registers for fast
 variables.
+
+### Sprites
+
+With `XGS_SPRITES` as well, a few sprites are drawn over the tile map, the way the Atari 2600
+draws its players: a sprite is a bitmap of 8 x 8 pixels with a colour for every pixel row, at a
+position that is exact to a pixel (an eighth of a cell), with copies at a fixed distance and a
+mask of which copies are there. A formation of invaders is one sprite.
+
+```c
+#include <stdint.h>
+#define XGS_COLUMNS 15          // 2 to 15 (a cell has 8 pixels)
+#define XGS_ROWS 10
+#define XGS_TILE_LINES 24
+#define XGS_SPRITES 3           // 1 to 3
+#define XGS_SPRITE_ROWS 3       // rows of copies below each other, 1 to 5 (default 1)
+#define XGS_SPRITE_STEP 2       // cells from one copy to the next, 2 to 15 (default 2)
+#define XGS_SPRITE_LINES 4      // lines of a pixel row: 1, 2, 4 or 8 (default 1)
+#include <xgs.h>
+
+const uint8_t xgs_tiles[256] = { ... };             // as for the tile map
+// 16 bytes for an image: the shape (the highest bit is the pixel on the left) and the colour of
+// every one of its 8 pixel rows, from the top; at most 16 images
+const uint8_t xgs_sprite_images[32] = { 0x18, 0x0f, 0x3c, 0x0e, ... };
+
+void main(void) {
+    xgs_init();
+    xgs_sprite(0, 20, 30, 1);          // sprite 0: x 20, y 30, image 1
+    xgs_sprite_copies(0, 0, 0x1f);     // row 0 of its copies: the 5 copies (bit n is copy n)
+    for (;;) xgs_frame();
+}
+```
+
+| | |
+|---|---|
+| `xgs_sprite(n, x, y, image)` | place sprite `n`: `x` counts pixels from the left of the picture (8 to 8 * columns - 1), `y` is the line of its first pixel row, `image` the number in `xgs_sprite_images` |
+| `xgs_sprite_copies(n, row, mask)` | which copies of the row `row` are there: bit 0 is the copy at `x`, bit 1 the one `XGS_SPRITE_STEP` cells to the right, and so on. A sprite without a bit is not there: this is how to hide it. |
+| `xgs_sprites[]` | the table behind them, one record for every sprite: `x`, `y`, image * 16, the masks of the rows, then work space of the kernel; the masks can be read there, too |
+
+`xgs_frame()` first works out the patterns of the copies of the sprites (357 cycles for one
+sprite, 3500 for 3 sprites of 5 rows) and then draws the picture; the game runs after it
+returns, as before. In short:
+
+- A cell has 8 pixels, `4090 / (8 * columns)` cycles apart (34 with 15 columns). A pixel has the
+  colour of the sprite where its shape has a bit, else the colour of the tile. The sprites do not change
+  the map. With 4 lines per pixel row the pixels of the sprite are about square.
+- A sprite is `8 * XGS_SPRITE_LINES` lines high, and so is every further row of copies (the rows of
+  the image that are 0 make a gap): `8 * rows * XGS_SPRITE_LINES` lines at most, 255 in all. In the
+  other lines the sprite is not there.
+- The cell on the left of the picture is free of sprites: `x` is at least 8. At the other edge the
+  sprite is cut off. `y` is a line number of 8 bits.
+- Sprites are not told apart in a cell: all their pixels in it get the colour of the sprite with the
+  highest number that has a copy there. A sprite has a colour of its own for every pixel row, a
+  cell for every line, so this only shows where two sprites touch.
+- A sprite takes about 150 cycles of the start of every line, the kernel has room for 3. It
+  is a little under 500 words long and takes all six direct registers (`o`, `bg`, `col`, `no`,
+  `acc_hi`, `acc_lo`); with 3 sprites some numbers of columns other than 15 make it a few words
+  longer than the 512 words of a page, which the compiler reports. RAM: `8 + 3 * XGS_SPRITE_ROWS`
+  bytes for a sprite, 7 for the kernel, `columns * rows` for the map.
+
+`examples/xgs_sprites.c` is a small invaders scene: the formation (one sprite, 5 copies in 3
+rows), a cannon that the joystick moves and a shot that removes a copy from the formation.
+`doc/video.md` has the numbers of the kernel and how it was tested: a model of the picture that is
+compared with every write to the video port of a frame.
 
 ## The map
 

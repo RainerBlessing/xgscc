@@ -840,7 +840,8 @@ namespace
 		{
 			if (declaration.elements.empty())
 				throw CompileError(declaration.line, "the const table '" + declaration.name + "' needs initial values");
-			if (variable.count * variable.type.size > TABLE_WORDS)
+			// the graphics of the hi-res tiles are read by the video kernel only and may be longer
+			if (variable.count * variable.type.size > TABLE_WORDS && declaration.name != "xgs_tiles")
 				throw CompileError(declaration.line, "the table '" + declaration.name + "' has " + decimal(variable.count * variable.type.size) +
 					" bytes, a table holds at most " + decimal(TABLE_WORDS));
 			Table table;
@@ -2376,6 +2377,23 @@ namespace
 				}
 				text += markers + converted + "\n";
 			}
+			// a routine that has to be on one page of 512 words moves to the next page if it does not fit
+			int words = 0;
+			{
+				istringstream counted(text);
+				string countedLine;
+				while (getline(counted, countedLine))
+				{
+					size_t first = countedLine.find_first_not_of(" \t");
+					if (first == string::npos || countedLine[first] == ';' || countedLine[first] == '@')
+						continue;
+					size_t last = countedLine.find_last_not_of(" \t");
+					if (countedLine[last] == ':')
+						continue;
+					words++;
+				}
+			}
+			function.code << "        samepage " << hexText(words) << "\n";
 			function.code << "        autopage off\n" << function.entry << ":\n";
 			if (lineMarkers)
 				function.code << "_C0_" << markerCount++ << ":\n";
@@ -3370,33 +3388,67 @@ namespace
 
 		// The tables sit at the top of the ROM, below the reset vector, each inside
 		// one block of 256 words. The code is in the way if it grows that far; the
-		// assembler finds it.
+		// assembler finds it. The table of the hi-res tiles (xgs_tiles) can be longer: it
+		// starts at a block and fills as many as it needs, the video kernel adds the
+		// block to the page. It goes first; the words above it are used by the others.
 		string placeTables(ostringstream& equs, ostringstream& data)
 		{
 			vector<Table> tables = reachableTables();
-			int cursor = 0xfff;		// the first word that is taken
-			for (size_t i = 0; i < tables.size(); i++)
+			vector<pair<int, int> > gaps;		// free words: [first, behind the last)
+			int cursor = 0xfff;			// the first word that is taken
+			for (int pass = 0; pass < 2; pass++)
 			{
-				const Table& table = tables[i];
-				int size = (int) table.words.size();
-				int start = cursor - size;
-				if (start < 0 || (start >> 8) != ((cursor - 1) >> 8))
+				for (size_t i = 0; i < tables.size(); i++)
 				{
-					cursor = ((cursor - 1) >> 8) << 8;
-					start = cursor - size;
-				}
-				if (start < 0)
-					throw CompileError(table.line, "the tables do not fit into the ROM");
-				cursor = start;
-				equs << table.label << "_page equ " << hexText(start >> 8) << "\n";
-				equs << table.label << "_base equ " << hexText(start & 0xff) << "\n";
-				data << "        org " << hexText(start) << "\n" << table.label << ":\n";
-				for (size_t w = 0; w < table.words.size(); w += 8)
-				{
-					data << "        dw ";
-					for (size_t k = w; k < table.words.size() && k < w + 8; k++)
-						data << (k > w ? ", " : "") << hexText(table.words[k]);
-					data << "\n";
+					const Table& table = tables[i];
+					int size = (int) table.words.size();
+					// the video kernel counts from the start of xgs_tiles: it starts at a block
+					bool large = size > TABLE_WORDS || table.name == "xgs_tiles";
+					if (large != (pass == 0))
+						continue;
+					int start = -1;
+					if (large)
+					{
+						start = ((cursor - size) >> 8) << 8;
+						if (start >= 0 && start + size < cursor)
+							gaps.push_back(make_pair(start + size, cursor));
+					}
+					else
+					{
+						for (size_t g = 0; g < gaps.size() && start < 0; g++)
+						{
+							int top = gaps[g].second - size;
+							if (top >= gaps[g].first && (top >> 8) == ((gaps[g].second - 1) >> 8))
+							{
+								start = top;
+								gaps[g].second = top;
+							}
+						}
+						if (start < 0)
+						{
+							start = cursor - size;
+							if (start < 0 || (start >> 8) != ((cursor - 1) >> 8))
+							{
+								cursor = ((cursor - 1) >> 8) << 8;
+								start = cursor - size;
+							}
+						}
+					}
+					if (start < 0)
+						throw CompileError(table.line, "the tables do not fit into the ROM");
+					if (start < cursor)
+						cursor = start;
+					equs << table.label << "_page equ " << hexText(start >> 8) << "\n";
+					equs << table.label << "_mode equ " << hexText((start >> 8) | 0x10) << "\n";
+					equs << table.label << "_base equ " << hexText(start & 0xff) << "\n";
+					data << "        org " << hexText(start) << "\n" << table.label << ":\n";
+					for (size_t w = 0; w < table.words.size(); w += 8)
+					{
+						data << "        dw ";
+						for (size_t k = w; k < table.words.size() && k < w + 8; k++)
+							data << (k > w ? ", " : "") << hexText(table.words[k]);
+						data << "\n";
+					}
 				}
 			}
 			return "";

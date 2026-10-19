@@ -330,3 +330,61 @@ outside.
 - Parameters of assembler functions can be in the banks: the lines that name one get a
   `@bank` marker, which the bank pass resolves (the routines do not use FSR).
 
+
+## 12. Result of step 4e: sprites
+
+`XGS_SPRITES` adds sprites to the tile map (`xgsSpriteFrameSource` in `src/kernel.cpp`, the library part
+in `src/library.cpp`, `README.md` has the C side). The model is the one of the Atari 2600, whose TIA
+draws two "players" of 8 pixels with a colour for every line, with copies at a fixed distance and a
+mask for them: **a few sprites with a lot of copies**, not a long list. A formation of 15 invaders is one
+sprite with 5 copies in 3 rows.
+
+### How the picture is made
+
+- A line is 8 pixels in every cell of the map, each `4090 / (8 * columns)` cycles wide (34 with 15
+  columns, so a cell is the same 272 cycles as in the tile kernel). A pixel is `rl o; mov w, bg; snb c; mov w, col;
+  mov re, w` (5 cycles): the colour of the sprite where the mask `o` of the cell has a bit, else the
+  colour of the tile.
+- Only 5 of the 34 cycles are the write: **between two pixels 29 cycles are free**, 8 times in a
+  cell. The masks of the next cell are put together in these gaps: one gap for every sprite (23
+  cycles), one for the tile of the next cell and the loop (27 cycles), 1 to set up. So a cell
+  takes the 272 cycles, whatever there is to draw: every write of every line is at a cycle that is
+  known at build time.
+- The sprite is not drawn pixel by pixel but as bytes: for every line its shape is shifted to the right by
+  `x & 7` into a pair of bytes (the pixels in the cell of `x`, and in the next one), and for every cell
+  the bits of the pattern of the copies (16 bits, a bit for every cell where a copy starts, made from the mask
+  once before the frame) say whether the first byte, the second byte or both of a sprite go into the
+  mask of the next cell. This is why the cell on the left cannot have sprites: the masks of a cell are made in the
+  one before it. Overlapping sprites in a cell share its colour.
+- The work for the sprites of a line (the line in the sprite, the row of the image with 2 `iread`, the
+  shift in 3 steps of 4, 2 and 1 pixels that do their part or nothing in the same cycles, the pattern of
+  the row of copies) is one routine for all sprites, entered from a place for each and left through a
+  jump back to it, about 150 cycles per sprite. It runs in the stretches of the start of a line that
+  are free (118, 374, 46, 198, 123 cycles between the sync, burst and porch writes), and the
+  generator puts the sprites there where they fit: 3 is what fits.
+- The generator counts every instruction (class `Piece`) and pads with delays to the planned
+  cycle; a configuration that does not fit is an error of the compiler with the number of cycles.
+
+### Numbers
+
+| | |
+|---|---|
+| kernel | 431 words for 1 sprite, 464 for 2, 493 for 3 (1 row of copies, 1 line per pixel row; 497 for the example: 3 rows, 4 lines); a page has 512 |
+| RAM | `8 + 3 * rows` bytes per sprite, 7 for the kernel |
+| time before the frame | 357 cycles (1 sprite), 799 (3, 1 row), 2155 (3, 3 rows), 3511 (3, 5 rows); inside the time of the game |
+| frame | 1 330 956 cycles ±5 and the vertical sync of 19 283 cycles, like the tile kernel (checked in the tests) |
+
+### Test
+
+`tests/sprites_test.cpp` runs programs on the emulated SX52 and compares **every write to RE of a frame**,
+value and cycle, with a model of the picture that is written separately: the tile map, the image tables, and
+for every line the copies, the shift, the pixel rows (1 to 8 lines), the rows of copies, the priority of
+up to 3 sprites, the edges of the picture and the cell on the left. It also moves a sprite and changes
+a mask from frame to frame, and checks that errors of the setup are said.
+
+### Not done
+
+More than 3 sprites (another 150 cycles per sprite do not fit before the first cell), shots and bombs as
+cheaper objects, a sprite in the cell on the left, a colour for every pixel (the colour is one per
+row of the image and cell), collision in the kernel (the C code can compare the positions), a
+combination with the hi-res tiles.
