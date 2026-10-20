@@ -60,8 +60,8 @@ const int XGS_HIRES_MIN_PITCH = 42;
  */
 std::string xgsHiresFrameSource(int columns, int rows, int tileLines, int pixels);
 
-/** The most sprites of the sprite kernel: every one takes about 150 cycles in the start of a line (374, 198 and 118 cycles are free between its writes). */
-const int XGS_MAX_SPRITES = 3;
+/** The most sprites of the sprite kernel: every one takes 116 to 121 cycles in the start of a line (three of them in the 374 cycles between the sync writes, the fourth in the 198). */
+const int XGS_MAX_SPRITES = 4;
 /** The widest picture and the narrowest pixel of the sprite kernel: 8 pixels in every cell, 34 cycles wide with 15 columns. */
 const int XGS_SPRITE_MAX_COLUMNS = 15;
 const int XGS_SPRITE_MIN_PITCH = 32;

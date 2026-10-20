@@ -13,6 +13,7 @@ struct CompileResult
 	std::vector<unsigned short> rom;	// the assembled program, 4096 words (0xFFF is empty)
 	std::map<std::string, int> variables;	// name of a global -> RAM address (of the low byte)
 	std::map<std::string, int> highBytes;	// name of a 16 bit global -> RAM address of the high byte
+	std::map<std::string, int> labels;	// every label of the assembler source -> ROM address
 	MemoryMap map;			// where everything is
 	std::string listing;		// the program words under the C lines they come from (only if asked for)
 };

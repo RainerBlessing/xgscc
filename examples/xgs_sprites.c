@@ -1,6 +1,7 @@
 // Sprites on top of the tile map: a formation of 15 invaders (one sprite: 5 copies in 3 rows, a mask
 // for every row says which of them are alive), a cannon that the joystick moves and a shot.
-// The ground is a row of tiles.
+// The ground is a row of tiles. The map is small (3 rows of 80 lines): every sprite keeps 16 bytes of shifted
+// bitmaps in the RAM, and the map is the other big part of it.
 //
 //   left, right  move the cannon      fire  shoots (one shot at a time)
 //
@@ -10,8 +11,8 @@
 // XGS_SPRITE_LINES lines, the rows of copies follow each other without a gap.
 #include <stdint.h>
 #define XGS_COLUMNS 15
-#define XGS_ROWS 10
-#define XGS_TILE_LINES 24
+#define XGS_ROWS 3
+#define XGS_TILE_LINES 80
 #define XGS_SPRITES 3
 #define XGS_SPRITE_ROWS 3       // rows of copies of a sprite below each other
 #define XGS_SPRITE_STEP 2       // the copies are 2 cells apart
@@ -36,13 +37,17 @@
 
 #define BLACK 0xf6
 
-// one colour for every line of every tile (24 lines: 10 tiles)
+#define B8 BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK
+#define B16 B8, B8
+
+// one colour for every line of every tile (80 lines: 3 tiles)
 const uint8_t xgs_tiles[256] = {
-    BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK,
-    BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK,
-    // the ground: a green-yellow bar on the top
-    0x0a, 0x0b, 0x0c, 0x0c, 0x0b, 0x0a, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK,
-    BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK, BLACK
+    // tile 0: nothing
+    B16, B16, B16, B16, B16,
+    // tile 1: the ground, a green-yellow bar of 6 lines in the lines 56 to 61 of the tile (the lines 216 to 221)
+    B16, B16, B16, B8,
+    0x0a, 0x0b, 0x0c, 0x0c, 0x0b, 0x0a,
+    B16, BLACK, BLACK
 };
 
 // shape and colour of the 8 pixel rows of an image: a pixel is set where the shape has a bit (the highest
@@ -57,6 +62,8 @@ const uint8_t xgs_sprite_images[64] = {
     // the shot: one pixel wide, two pixel rows high
     0x10, 0xff, 0x10, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
+
+const uint8_t bit[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };     // a table: a shift by a variable takes a routine and RAM
 
 uint8_t buttons;
 uint8_t frames;
@@ -75,8 +82,8 @@ void shoot(void)
     if (row < 3 && across < 72 && (across & 15) < 8) {
         uint8_t copy = across >> 4;
         uint8_t mask = xgs_sprites[3 + row];       // the masks of the first sprite are bytes 3, 4, 5 of its record
-        if (mask & (1 << copy)) {
-            xgs_sprite_copies(ALIENS, row, mask & ~(1 << copy));
+        if (mask & bit[copy]) {
+            xgs_sprite_copies(ALIENS, row, mask & ~bit[copy]);
             shot_y = 0;
         }
     }
@@ -85,8 +92,9 @@ void shoot(void)
 void main(void)
 {
     xgs_init();
+    // the map is written directly: xgs_tile(x, 2, GROUND) would take a multiplication (y * 15) and 5 bytes
     for (uint8_t x = 0; x < XGS_COLUMNS; x++) {
-        xgs_tile(x, 9, GROUND);
+        xgs_map[2 * XGS_COLUMNS + x] = GROUND * XGS_TILE_LINES;
     }
     for (uint8_t row = 0; row < 3; row++) {
         xgs_sprite_copies(ALIENS, row, 0x1f);
