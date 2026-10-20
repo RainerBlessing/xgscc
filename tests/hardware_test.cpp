@@ -4,6 +4,7 @@
 #include <vector>
 #include "compiler.h"
 #include "cpu.h"
+#include "run_helper.h"
 
 namespace {
 
@@ -48,27 +49,8 @@ struct Machine {
         return cpu.getRAM()[compiled.variables.at(name)];
     }
 
-    // the commands the sound chip received, decoded like the BU8763: 11 bits, MSB first, SDATA at the rising edge of SCLK, applied at the rising edge of SSTB
     std::vector<int> commands() {
-        std::vector<int> result;
-        int shift = 0;
-        bool sclk = false;
-        bool sstb = false;
-        // the state before the first write
-        for (size_t i = 0; i < sound.writes.size(); i++) {
-            unsigned char ra = sound.writes[i];
-            bool nowSclk = (ra & 8) != 0;
-            bool nowSstb = (ra & 0x20) != 0;
-            if (nowSclk && !sclk) {
-                shift = ((shift << 1) | ((ra & 0x10) ? 1 : 0)) & 0x7ff;
-            }
-            if (nowSstb && !sstb) {
-                result.push_back(shift);
-            }
-            sclk = nowSclk;
-            sstb = nowSstb;
-        }
-        return result;
+        return decodeSoundCommands(sound.writes);
     }
 };
 

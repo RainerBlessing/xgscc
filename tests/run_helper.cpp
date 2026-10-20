@@ -19,6 +19,27 @@ int ProgramRun::value16(const std::string& name) const
 	return value(name) | ram[high->second] << 8;
 }
 
+std::vector<int> decodeSoundCommands(const std::vector<unsigned char>& raWrites)
+{
+	std::vector<int> result;
+	int shift = 0;
+	bool sclk = false;
+	bool sstb = false;
+	for (size_t i = 0; i < raWrites.size(); i++)
+	{
+		const unsigned char ra = raWrites[i];
+		const bool nowSclk = (ra & 8) != 0;
+		const bool nowSstb = (ra & 0x20) != 0;
+		if (nowSclk && !sclk)
+			shift = ((shift << 1) | ((ra & 0x10) ? 1 : 0)) & 0x7ff;
+		if (nowSstb && !sstb)
+			result.push_back(shift);
+		sclk = nowSclk;
+		sstb = nowSstb;
+	}
+	return result;
+}
+
 // one run at the given optimization level
 static ProgramRun runAt(const std::string& source, long maxSteps, int level)
 {

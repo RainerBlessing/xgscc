@@ -8,6 +8,9 @@
 //   every 32 frames an invader drops a bomb on the cannon (the lowest one of the copy that is nearest to it);
 //   when a bomb hits the cannon the invaders start again
 //
+// Sound, the setup of Rem Pac: channel 1 is a square wave with a fast envelope (shot, hit of an invader, hit of
+// the cannon), channel 2 a sine wave with a slow one (the march of the invaders: 4 notes, one every 16 frames).
+//
 // A sprite is a bitmap of 8 x 8 pixels from the table xgs_sprite_images, with a colour for every pixel
 // row. A cell of the map has 8 pixels, so a cell is as wide as a sprite; x counts these pixels (0 to
 // 119); the sprites reach both edges of the picture. A pixel row is
@@ -71,6 +74,7 @@ const uint8_t xgs_sprite_images[80] = {
 };
 
 const uint8_t bit[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };     // a table: a shift by a variable takes a routine and RAM
+const uint8_t march[4] = { 12, 10, 8, 7 };                  // notes, a semitone apart: 0 is A2, at most 31
 
 uint8_t buttons;
 uint8_t frames;
@@ -95,6 +99,7 @@ void shoot(void)
         if (mask & bit[copy]) {
             xgs_sprite_copies(ALIENS, row, mask & ~bit[copy]);
             shot_y = 0;
+            xgs_note(0, 20);
         }
     }
 }
@@ -143,6 +148,10 @@ void start_formation(void)
 void main(void)
 {
     xgs_init();
+    xgs_sound(0, 0xc0);                     // channels 1 and 2 on
+    xgs_sound(1, 0x18);                     // channel 1: square, envelope, fast
+    xgs_sound(1, 0x73);                     // channel 2: sine, envelope, slow, 8.5 dB less
+    xgs_sound(3, 0x00);                     // the loudest
     // the map is written directly: xgs_tile(x, 2, GROUND) would take a multiplication (y * 15) and 5 bytes
     for (uint8_t x = 0; x < XGS_COLUMNS; x++) {
         xgs_map[2 * XGS_COLUMNS + x] = GROUND * XGS_TILE_LINES;
@@ -173,6 +182,7 @@ void main(void)
         if ((buttons & FIRE) && shot_y == 0) {
             shot_x = cannon_x;
             shot_y = 196;
+            xgs_note(0, 31);
         }
         if (shot_y) {
             shot_y -= 4;
@@ -195,6 +205,7 @@ void main(void)
             } else if (bomb_y + 12 > 200 && (uint8_t) (bomb_x + 3 - cannon_x) < 8) {
                 hits++;
                 start_formation();
+                xgs_note(0, 0);
                 xgs_sprite(ALIENS, alien_x, alien_y, IMAGE_ALIEN_A);
             }
         } else if ((frames & 31) == 0) {
@@ -204,6 +215,11 @@ void main(void)
             xgs_sprite(BOMB, bomb_x, bomb_y, IMAGE_BOMB);
         }
         xgs_sprite_copies(BOMB, 0, bomb_y != 0);
+
+        // the march: a note every 16 frames, the 4 notes one after the other
+        if ((frames & 15) == 0) {
+            xgs_note(1, march[(frames >> 4) & 3]);
+        }
 
         // the formation steps sideways and down every 8 frames, the invaders change their legs
         if ((frames & 7) == 0) {

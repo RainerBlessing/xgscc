@@ -10,6 +10,7 @@
 #include "compiler.h"
 #include "cpu.h"
 #include "kernel.h"
+#include "run_helper.h"
 
 namespace {
 
@@ -826,4 +827,76 @@ TEST(SpritesTest, TheInvadersDropBombsAndTheCannonIsHit) {
         most = std::max(most, 92473 - before);
     }
     EXPECT_LT(most, 9300) << "the game and the update take " << most << " cycles";
+}
+
+class SoundLog : public SoundPort {
+public:
+    std::vector<unsigned char> writes;
+    void portWrite(unsigned char ra) { writes.push_back(ra); }
+};
+
+// examples/xgs_sprites.c: the setup of the two channels, the march of 4 notes on channel 2 every 16 frames, and
+// the effects on channel 1: a shot (note 31), an invader that is hit (20), the cannon that is hit (0)
+TEST(SpritesTest, TheExamplePlaysItsSounds) {
+    std::ifstream file(EXAMPLES_DIR "/xgs_sprites.c");
+    std::stringstream text;
+    text << file.rdbuf();
+    CompileResult compiled = compile(text.str(), "xgs_sprites.c");
+    ASSERT_TRUE(compiled.ok) << compiled.error;
+    Recorder recorder;
+    SoundLog log;
+    Cpu cpu(&recorder);
+    cpu.reset();
+    cpu.setSound(&log);
+    *cpu.getJoystrickr() = 0x10;        // fire, the cannon stands still
+    for (size_t i = 0; i < compiled.rom.size(); i++) {
+        cpu.getROM()[i] = compiled.rom[i];
+    }
+    const unsigned frameDone = compiled.labels.at("xgs_update_end");
+    long frames = 0;
+    while (frames < 600) {
+        if (*cpu.getPC() == frameDone) {
+            frames++;
+        }
+        cpu.execute();
+    }
+    const std::vector<int> commands = decodeSoundCommands(log.writes);
+    ASSERT_GT(commands.size(), 4u);
+    // the setup: channels 1 and 2 on, the waves of the two, the volume
+    EXPECT_EQ(0x0c0, commands[0]);
+    EXPECT_EQ(0x118, commands[1]);
+    EXPECT_EQ(0x173, commands[2]);
+    EXPECT_EQ(0x300, commands[3]);
+    const int march[4] = { 12, 10, 8, 7 };
+    std::vector<int> notes;                 // the notes of channel 2
+    int shots = 0;
+    int invaderHits = 0;
+    int cannonHits = 0;
+    for (size_t i = 4; i < commands.size(); i++) {
+        const int address = commands[i] >> 8;
+        const int channel = (commands[i] >> 6) & 3;
+        const int note = commands[i] & 0x3f;
+        ASSERT_EQ(2, address) << "command " << i << " is not a note";
+        if (channel == 1) {
+            notes.push_back(note);
+        } else {
+            ASSERT_EQ(0, channel) << "command " << i;
+            shots += note == 31;
+            invaderHits += note == 20;
+            cannonHits += note == 0;
+            EXPECT_TRUE(note == 31 || note == 20 || note == 0) << "note " << note;
+        }
+    }
+    EXPECT_GE(notes.size(), 30u) << "one every 16 frames";
+    size_t first = 0;                       // the march starts where the counter of the frames is
+    while (first < 3 && march[first] != notes[0]) {
+        first++;
+    }
+    for (size_t i = 0; i < notes.size(); i++) {
+        EXPECT_EQ(march[(first + i) % 4], notes[i]) << "note " << i << " of the march";
+    }
+    EXPECT_GE(shots, 5) << "the fire button is held";
+    EXPECT_GE(invaderHits, 1);
+    EXPECT_EQ(cpu.getRAM()[compiled.variables.at("hits")], cannonHits) << "a note for every hit of the cannon";
+    EXPECT_GE(cannonHits, 1);
 }
