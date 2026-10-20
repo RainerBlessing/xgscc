@@ -345,8 +345,12 @@ the game runs after it returns, as before. In short:
   `xgs_sprite_update`, so up to about 500 words in front of each can stay empty, which matters
   if the ROM is nearly full. RAM: `24 + 3 * XGS_SPRITE_ROWS` bytes for a sprite (16 of them are the shifted
   bitmap that the update makes, so that the kernel does not have to shift), 8 for the kernel,
-  `columns * rows` for the map. 4 sprites of 3 rows take 132 bytes: the map has to be small
-  (`examples/xgs_sprites.c`: 3 rows of 80 lines, 45 bytes).
+  `columns * rows` for the map. The RAM is shared between the map and the sprites, so the size of the map is a
+  choice of the program, not a limit of the compiler: `XGS_ROWS * XGS_TILE_LINES` only has to give the lines of
+  the picture (at most 255), and a map with fewer rows has taller tiles (`256 / XGS_TILE_LINES` of them).
+  A 15 x 10 map (150 bytes) with 2 sprites of 1 row of copies takes 218 of the 246 bytes in an empty program;
+  4 sprites of 3 rows take 132 bytes, so there (`examples/xgs_sprites.c`: 3 rows of 80 lines, 45 bytes) the map is
+  small. The tile map gets more rows when there are fewer sprites or fewer rows of copies.
 
 `examples/xgs_sprites.c` is a small invaders scene: the formation (one sprite, 5 copies in 3
 rows), a cannon that the joystick moves and a shot that removes a copy from the formation.

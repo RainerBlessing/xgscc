@@ -494,13 +494,17 @@ bool start(Machine& m, const std::string& source) {
 // The two additions in the sprite routine that have no clrb in front of them need the carry to be 0. The
 // test looks at the carry in front of them in every line of 3 frames, for every sprite row and pixel row of
 // images that start at every pixel offset, also in the lines where a sprite is not (a sprite is 96 lines high).
-TEST(SpritesTest, TheCarryIsZeroWhereTheKernelDependsOnIt) {
+// The second addition is on FSR: the records of the sprites are once in the upper half of the RAM (addresses
+// above 0x7f) and once with a record on each side of it, so that the sum of FSR and the offset is seen there.
+void expectCarryZero(int players, int spriteRows, bool inTheUpperHalf) {
     Scene s = fourSprites();
-    s.spriteRows = 3;
+    s.players = players;
+    s.sprites.resize(players);
+    s.spriteRows = spriteRows;
     s.pixelLines = 4;
     s.images = 8;
     for (size_t i = 0; i < s.sprites.size(); i++) {
-        s.sprites[i].masks = std::vector<int>(3, 0x1f);
+        s.sprites[i].masks = std::vector<int>(spriteRows, 0x1f);
         s.sprites[i].x = 8 * static_cast<int>(i) + 3 + 2 * static_cast<int>(i);
         s.sprites[i].y = 20 + 40 * static_cast<int>(i);
         s.sprites[i].image = 7 - 2 * static_cast<int>(i);       // the highest images: the largest addresses
@@ -508,6 +512,14 @@ TEST(SpritesTest, TheCarryIsZeroWhereTheKernelDependsOnIt) {
     s.loop = "  xgs_sprite(0, xgs_sprites[0] + 1, xgs_sprites[1], 7);";
     Machine m;
     ASSERT_TRUE(start(m, program(s))) << m.compiled.error;
+    const int first = m.compiled.variables.at("xgs_sprites");
+    const int last = first + players * xgsSpriteRecord(spriteRows) - 1;
+    if (inTheUpperHalf) {
+        EXPECT_GE(first, 0x80) << "the records are in the upper half";
+    } else {
+        EXPECT_LT(first, 0x80) << "the first record is in the lower half";
+        EXPECT_GE(last, 0x80) << "and the last one in the upper half";
+    }
     const unsigned address[2] = { static_cast<unsigned>(m.compiled.labels.at("xgs_carry0_a")), static_cast<unsigned>(m.compiled.labels.at("xgs_carry0_b")) };
     long visits[2] = { 0, 0 };
     long wrong[2] = { 0, 0 };
@@ -525,10 +537,15 @@ TEST(SpritesTest, TheCarryIsZeroWhereTheKernelDependsOnIt) {
         m.cpu.execute();
     }
     for (int i = 0; i < 2; i++) {
-        EXPECT_GT(visits[i], 240 * 4 * 2) << "the addition " << i << " is run in every line for every sprite";
+        EXPECT_GT(visits[i], 240 * players * 2) << "the addition " << i << " is run in every line for every sprite";
         EXPECT_EQ(0, wrong[i]) << "the carry is set in front of the addition " << i;
     }
     EXPECT_GT(carrySet, 0) << "the carry bit is not read from the right place";
+}
+
+TEST(SpritesTest, TheCarryIsZeroWhereTheKernelDependsOnIt) {
+    expectCarryZero(4, 3, false);
+    expectCarryZero(2, 1, true);
 }
 
 // the cycles that xgs_sprite_update needs before it starts to wait for the frame: the time that the game loses
