@@ -748,3 +748,82 @@ TEST(SpritesTest, TheExampleRunsAndTheShotFlies) {
     }
     EXPECT_GT(least, 92473 - 9300) << "the game and the update take " << 92473 - least << " cycles of the 92 473 that the frame leaves";
 }
+
+// examples/xgs_sprites.c: the invaders drop a bomb on the cannon, which stands still; the bomb falls 2 lines a
+// frame, is drawn (its colour 0x4c is in no other sprite), and the cannon that it hits starts the invaders again
+TEST(SpritesTest, TheInvadersDropBombsAndTheCannonIsHit) {
+    std::ifstream file(EXAMPLES_DIR "/xgs_sprites.c");
+    std::stringstream text;
+    text << file.rdbuf();
+    CompileResult compiled = compile(text.str(), "xgs_sprites.c");
+    ASSERT_TRUE(compiled.ok) << compiled.error;
+    Recorder recorder;
+    Cpu cpu(&recorder);
+    cpu.reset();
+    *cpu.getJoystrickr() = 0;
+    for (size_t i = 0; i < compiled.rom.size(); i++) {
+        cpu.getROM()[i] = compiled.rom[i];
+    }
+    const unsigned frameDone = compiled.labels.at("xgs_update_end");
+    const unsigned char* ram = cpu.getRAM();
+    const int bombY = compiled.variables.at("bomb_y");
+    const int hits = compiled.variables.at("hits");
+    const int masks = compiled.variables.at("xgs_sprites") + 3;
+    std::vector<int> falling;           // bomb_y at the start of every frame
+    std::vector<int> hit;               // how often the cannon was hit
+    std::vector<unsigned> waits;        // when the wait for the frame starts
+    while (cpu.getCycle() < static_cast<unsigned>(XGS_FRAME_CYCLES) * 600 && (hit.empty() || hit.back() < 2)) {
+        if (*cpu.getPC() == frameDone) {
+            falling.push_back(ram[bombY]);
+            hit.push_back(ram[hits]);
+            waits.push_back(cpu.getCycle());
+        }
+        cpu.execute();
+    }
+    ASSERT_FALSE(hit.empty());
+    EXPECT_GE(hit.back(), 2) << "the cannon is hit by the bombs that are aimed at it";
+    int flights = 0;
+    for (size_t i = 1; i < falling.size(); i++) {
+        if (falling[i - 1] != 0 && falling[i] != 0 && hit[i] == hit[i - 1]) {
+            EXPECT_EQ(falling[i - 1] + 2, falling[i]) << "frame " << i;
+        }
+        if (falling[i - 1] == 0 && falling[i] != 0) {
+            flights++;
+        }
+        EXPECT_LT(falling[i], 232);
+        if (hit[i] != hit[i - 1]) {
+            EXPECT_EQ(0, falling[i]) << "the bomb is gone when it hits";
+            for (int row = 0; row < 3; row++) {
+                EXPECT_EQ(0x1f, ram[masks + row]) << "the invaders start again";
+            }
+        }
+    }
+    EXPECT_GE(flights, 2);
+    int framesWithBomb = 0;
+    std::vector<size_t> frames = frameStarts(recorder.events);
+    ASSERT_GE(frames.size(), 4u);
+    for (size_t f = 0; f + 1 < frames.size(); f++) {
+        for (size_t e = frames[f]; e < frames[f + 1]; e++) {
+            if (recorder.events[e].value == 0x4c) {
+                framesWithBomb++;
+                break;
+            }
+        }
+    }
+    EXPECT_GT(framesWithBomb, 40) << "the bomb is in the picture";
+    // the frames in which a bomb is dropped (the search of drop()) or hits take the most: the game and the
+    // update of 4 sprites stay below a tenth of the 92 473 cycles that the frame leaves
+    long most = 0;
+    for (size_t k = 2; k + 1 < frames.size(); k++) {
+        const unsigned sync = recorder.events[frames[k] - 1].cycle;
+        long before = -1;
+        for (size_t w = 0; w < waits.size(); w++) {
+            if (waits[w] < sync) {
+                before = static_cast<long>(sync) - static_cast<long>(waits[w]);
+            }
+        }
+        ASSERT_GT(before, 0) << "frame " << k;
+        most = std::max(most, 92473 - before);
+    }
+    EXPECT_LT(most, 9300) << "the game and the update take " << most << " cycles";
+}
