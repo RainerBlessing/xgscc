@@ -169,7 +169,7 @@ std::vector<Event> expectedLine(const Scene& s, int line) {
                 continue;
             }
             int start = (sprite.x >> 3) + copy * s.step;
-            if (start < 16 && start >= 1 && start < s.columns) {
+            if (start < 16 && start < s.columns) {
                 mask[start] |= hi;
                 colour[start] = sprColour;
             }
@@ -179,7 +179,7 @@ std::vector<Event> expectedLine(const Scene& s, int line) {
             }
         }
     }
-    // the cell on the left never has sprites: the pattern bit of cell 0 would only put its lower half into cell 1
+    // the cell on the left has sprites like all the others
     std::vector<Event> events;
     const int prefix[5] = { 0xf6, 0xf0, 0xf6, 0x05, 0xf6 };
     const unsigned prefixAt[5] = { 0, 120, 496, 544, 744 };
@@ -272,15 +272,33 @@ TEST(SpritesTest, EveryPositionInsideACellShiftsTheBitmap) {
     }
 }
 
-TEST(SpritesTest, TheCellOnTheLeftIsFreeOfSprites) {
+TEST(SpritesTest, ASpriteReachesTheLeftEdgeOfThePicture) {
+    for (int x = 0; x < 8; x++) {
+        Scene s = basic();
+        s.sprites[0].x = x;
+        s.sprites[0].masks[0] = 0x07;
+        expectScene(s);
+    }
+}
+
+TEST(SpritesTest, ASecondSpriteInTheCellOnTheLeft) {
     Scene s = basic();
-    s.sprites[0].x = 3;
+    s.players = 2;
+    s.sprites[0].x = 5;
+    Sprite second = { 2, 33, 1, std::vector<int>(1, 3) };
+    s.sprites.push_back(second);
     expectScene(s);
 }
 
 TEST(SpritesTest, SpritesBehindTheRightEdgeAreCut) {
     Scene s = basic();
     s.sprites[0].x = 8 * 14 + 5;
+    expectScene(s);
+}
+
+TEST(SpritesTest, ASpriteBelowTheEndOfTheLineNumbersComesInAtTheTop) {
+    Scene s = basic();
+    s.sprites[0].y = 252;       // its lines 252 to 259: the last four are the lines 0 to 3
     expectScene(s);
 }
 
