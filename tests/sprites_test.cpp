@@ -369,6 +369,24 @@ TEST(SpritesTest, ThreeSprites) {
     expectScene(s);
 }
 
+// the kernel with 3 sprites fits on a page for every number of columns, also with the tallest pixel rows
+TEST(SpritesTest, ThreeSpritesWithEveryNumberOfColumns) {
+    for (int columns = 2; columns <= 15; columns++) {
+        Scene s = basic();
+        s.columns = columns;
+        s.players = 3;
+        s.pixelLines = 8;
+        s.sprites[0].x = 3;
+        s.sprites[0].y = 40;
+        s.sprites[0].masks[0] = 3;
+        Sprite second = { 5, 44, 1, std::vector<int>(1, 1) };
+        Sprite third = { 9, 38, 0, std::vector<int>(1, 1) };
+        s.sprites.push_back(second);
+        s.sprites.push_back(third);
+        expectScene(s);
+    }
+}
+
 TEST(SpritesTest, ASpriteWithoutCopiesIsNotThere) {
     Scene s = basic();
     s.sprites[0].masks[0] = 0;

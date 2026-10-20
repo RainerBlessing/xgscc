@@ -762,8 +762,9 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	book.ins("clr indf");					// nothing in the first cell yet
 
 	// ---- one sprite in this line: the pixel row, the shifted bitmap, the pattern of the copies ----
-	// One routine for all of them, entered from a place for each sprite (the number is in xgs_ret),
-	// ending in a jump back to it. xgs_up is the record of the sprite and moves on to the next.
+	// One routine for all of them, called from a place for each sprite and ending in retp. It is at the
+	// start of the kernel's page: a call reaches only the first 256 words of a page.
+	// xgs_up is the record of the sprite and moves on to the next.
 	Piece sub(&labels, T);
 	int at = 0;						// where FSR is in the record, -1: not known
 	sub.address("xgs_ln", 0);
@@ -894,42 +895,13 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("mov w, #" + hexText(layout.size));
 	sub.ins("clrb status.0");
 	sub.ins("add indf, w");					// the next sprite
-	// the way back: the number of the sprite (xgs_ret) says where
-	const int body = sub.length();
-	sub.address("xgs_ret", 0);
-	sub.ins("mov w, indf");
-	sub.ins("mov " + T + ", w");
-	vector<int> back(c.players, 0);		// the cycles of the way back to the place of sprite u
-	for (int u = 0; u < c.players; u++)
-	{
-		string target = "xgs_back" + hexText(u);
-		if (u + 1 < c.players)
-		{
-			sub.ins("mov w, " + T);
-			sub.ins("xor w, #" + hexText(u));
-			sub.ins("snb status.2", 0);
-			sub.ins("jmp " + target, 0);
-			sub.count(2);							// the jump is not taken: the skip takes 2 cycles
-			back[u] = sub.length() - body - 2 + 4;	// taken: 1 cycle for snb, 3 for the jump
-		}
-		else
-		{
-			sub.jump(target);
-			back[u] = sub.length() - body;
-		}
-	}
+	sub.ins("retp", 3);
 
 	vector<Piece> places;
 	for (int u = 0; u < c.players; u++)
 	{
 		Piece p(&labels, T);
-		p.address("xgs_ret", 0);
-		p.ins("mov w, #" + hexText(u));
-		p.ins("mov indf, w");
-		p.jump("xgs_sub");
-		p.label("xgs_back" + hexText(u));
-		// what the routine took: the body and the way back (the jump into it is counted above)
-		p.count(body + back[u]);
+		p.ins("call xgs_sub", 3 + sub.length());		// the call and what the routine takes, retp included
 		places.push_back(std::move(p));
 	}
 
@@ -1101,7 +1073,8 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	done.ins("retp", 0);
 
 	source += line + cells + exit.text() + last.text() + again.text() + "xgs_last:\n" + done.text();
-	source += "xgs_sub:\n" + sub.text();
+	// the routine of the sprites first (a call reaches only the first 256 words of the page), then a jump over it
+	source = "        jmp xgs_begin\nxgs_sub:\n" + sub.text() + "xgs_begin:\n" + source;
 	int words = 0;
 	{
 		istringstream counted(source);

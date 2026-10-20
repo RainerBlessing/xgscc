@@ -335,15 +335,14 @@ the game runs after it returns, as before. In short:
 - Sprites are not told apart in a cell: all their pixels in it get the colour of the sprite with the
   highest number that has a copy there. A sprite has a colour of its own for every pixel row, a
   cell for every line, so this only shows where two sprites touch.
-- A sprite takes about 165 cycles of the start of every line, the kernel has room for 3. It
-  is 445 to 505 words long and takes all six direct registers (`o`, `bg`, `col`, `no`,
-  `acc_hi`, `acc_lo`). A page of the ROM has 512 words, so **3 sprites only fit with some settings**:
-  with 14 or 15 columns always, with 13 columns unless `XGS_SPRITE_LINES` is 8, with 6, 7 and 12
-  columns only with 1 line per pixel row, with other numbers of columns not at all. 1 and 2 sprites
-  fit with every number of columns. The compiler reports it, with the number of words.
+- A sprite takes about 155 cycles of the start of every line, the kernel has room for 3. It
+  is 438 to 488 words long and takes all six direct registers (`o`, `bg`, `col`, `no`,
+  `acc_hi`, `acc_lo`). A page of the ROM has 512 words; 1 to 3 sprites fit with every number of
+  columns and every `XGS_SPRITE_LINES`. The compiler reports it, with the number of words, if a
+  setting does not.
 - The kernel is placed at the start of a page of the ROM (`samepage`), and so is
   `xgs_sprite_update`, so up to about 500 words in front of each can stay empty, which matters
-  if the ROM is nearly full. RAM: `8 + 3 * XGS_SPRITE_ROWS` bytes for a sprite, 9 for the kernel,
+  if the ROM is nearly full. RAM: `8 + 3 * XGS_SPRITE_ROWS` bytes for a sprite, 8 for the kernel,
   `columns * rows` for the map.
 
 `examples/xgs_sprites.c` is a small invaders scene: the formation (one sprite, 5 copies in 3

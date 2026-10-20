@@ -95,7 +95,7 @@ void xgsCheckSprites(const SpriteConfig& config);
  * first line; the lines count modulo 256), with copies every
  * config.step cells and a mask for them. {o}, {bg}, {col}, {no}, {acc_hi} and {acc_lo} are the
  * registers; the arrays are xgs_map, xgs_sprites and, one byte each, xgs_ln, xgs_s, xgs_r, xgs_mp,
- * xgs_cnt, xgs_up, xgs_ret, xgs_m0, xgs_k0. A line takes the same 5080 cycles as always, the cells are 8 writes each.
+ * xgs_cnt, xgs_up, xgs_m0, xgs_k0. A line takes the same 5080 cycles as always, the cells are 8 writes each.
  */
 std::string xgsSpriteFrameSource(const SpriteConfig& config);
 
