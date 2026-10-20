@@ -355,7 +355,9 @@ the game runs after it returns, as before. In short:
 `examples/xgs_sprites.c` is a small invaders scene with 4 sprites: the formation (one sprite, 5 copies in 3
 rows), a cannon that the joystick moves, a shot that removes a copy from the formation and the bombs of the
 invaders, which start below the lowest invader nearest to the cannon, fall, and start the game again when they hit it
-(213 of the 246 bytes of RAM).
+(217 of the 246 bytes of RAM). It has sound, too, set up like in Rem Pac (Rémi Veilleux's Pac-Man for the XGS ME):
+channel 1 is a square wave with a fast envelope for the shot and the hits, channel 2 a sine wave with a slow one for
+the march of the invaders.
 `doc/video.md` has the numbers of the kernel and how it was tested: a model of the picture that is
 compared with every write to the video port of a frame.
 

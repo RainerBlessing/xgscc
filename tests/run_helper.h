@@ -1,6 +1,7 @@
 #ifndef RUN_HELPER_H_
 #define RUN_HELPER_H_
 #include <string>
+#include <vector>
 #include "compiler.h"
 
 // Compiles a C program, runs it on the emulated SX52 (without video) and gives
@@ -20,5 +21,10 @@ struct ProgramRun
 };
 
 ProgramRun runProgram(const std::string& source, long maxSteps = 200000);
+
+// The commands that the sound chip received, decoded like the BU8763 does from the writes to port RA:
+// 11 bits, the highest first, SDATA (RA4) is taken at the rising edge of SCLK (RA3), the command is
+// applied at the rising edge of SSTB (RA5). A command is the address (3 bits) and the data (8 bits).
+std::vector<int> decodeSoundCommands(const std::vector<unsigned char>& raWrites);
 
 #endif /*RUN_HELPER_H_*/
