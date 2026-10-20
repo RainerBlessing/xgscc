@@ -352,8 +352,10 @@ the game runs after it returns, as before. In short:
   4 sprites of 3 rows take 132 bytes, so there (`examples/xgs_sprites.c`: 3 rows of 80 lines, 45 bytes) the map is
   small. The tile map gets more rows when there are fewer sprites or fewer rows of copies.
 
-`examples/xgs_sprites.c` is a small invaders scene: the formation (one sprite, 5 copies in 3
-rows), a cannon that the joystick moves and a shot that removes a copy from the formation.
+`examples/xgs_sprites.c` is a small invaders scene with 4 sprites: the formation (one sprite, 5 copies in 3
+rows), a cannon that the joystick moves, a shot that removes a copy from the formation and the bombs of the
+invaders, which start below the lowest invader nearest to the cannon, fall, and start the game again when they hit it
+(213 of the 246 bytes of RAM).
 `doc/video.md` has the numbers of the kernel and how it was tested: a model of the picture that is
 compared with every write to the video port of a frame.
 
