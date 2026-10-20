@@ -292,9 +292,9 @@ mask of which copies are there. A formation of invaders is one sprite.
 ```c
 #include <stdint.h>
 #define XGS_COLUMNS 15          // 2 to 15 (a cell has 8 pixels)
-#define XGS_ROWS 10
-#define XGS_TILE_LINES 24
-#define XGS_SPRITES 3           // 1 to 3
+#define XGS_ROWS 3              // a small map: every sprite takes 24 + 3 * XGS_SPRITE_ROWS bytes of the RAM
+#define XGS_TILE_LINES 80       // rows * tile lines <= 255: 3 rows of 80 lines, 3 tiles
+#define XGS_SPRITES 3           // 1 to 4
 #define XGS_SPRITE_ROWS 3       // rows of copies below each other, 1 to 5 (default 1)
 #define XGS_SPRITE_STEP 2       // cells from one copy to the next, 2 to 15 (default 2)
 #define XGS_SPRITE_LINES 4      // lines of a pixel row: 1, 2, 4 or 8 (default 1)
@@ -317,10 +317,11 @@ void main(void) {
 |---|---|
 | `xgs_sprite(n, x, y, image)` | place sprite `n`: `x` counts pixels from the left edge of the picture (0 to 8 * columns - 1), `y` is the line of its first pixel row, `image` the number in `xgs_sprite_images` |
 | `xgs_sprite_copies(n, row, mask)` | which copies of the row `row` are there: bit 0 is the copy at `x`, bit 1 the one `XGS_SPRITE_STEP` cells to the right, and so on. A sprite without a bit is not there: this is how to hide it. |
-| `xgs_sprites[]` | the table behind them, one record for every sprite: `x`, `y`, image * 16, the masks of the rows, then work space of the kernel; the masks can be read there, too |
+| `xgs_sprites[]` | the table behind them, one record for every sprite: `x`, `y`, image * 16, the masks of the rows, then work space of the kernel (the patterns of the copies, the state of a line, the 8 pixel rows of the image shifted to `x`); the masks can be read there, too |
 
-`xgs_frame()` first works out the patterns of the copies of the sprites (357 cycles for one
-sprite, 3500 for 3 sprites of 5 rows) and waits for the end of the frame, then draws the picture;
+`xgs_frame()` first works out the patterns of the copies of the sprites and the shifted bitmaps (2 800 to 4 500
+cycles for 3 sprites of 3 rows, depending on `x & 7`; 540 to 1 100 for one sprite of 1 row; 5 400 to 7 700 for
+4 sprites of 5 rows) and waits for the end of the frame, then draws the picture;
 the game runs after it returns, as before. In short:
 
 - A cell has 8 pixels, `4090 / (8 * columns)` cycles apart (34 with 15 columns). A pixel has the
@@ -335,15 +336,17 @@ the game runs after it returns, as before. In short:
 - Sprites are not told apart in a cell: all their pixels in it get the colour of the sprite with the
   highest number that has a copy there. A sprite has a colour of its own for every pixel row, a
   cell for every line, so this only shows where two sprites touch.
-- A sprite takes about 155 cycles of the start of every line, the kernel has room for 3. It
-  is 438 to 488 words long and takes all six direct registers (`o`, `bg`, `col`, `no`,
-  `acc_hi`, `acc_lo`). A page of the ROM has 512 words; 1 to 3 sprites fit with every number of
-  columns and every `XGS_SPRITE_LINES`. The compiler reports it, with the number of words, if a
-  setting does not.
+- A sprite takes 116 to 121 cycles of the start of every line (1, 2, 4 or 8 lines per pixel row: 121, 116,
+  118, 120), the kernel has room for 4: three in the 374 cycles between the sync writes, the fourth in the
+  198 cycles behind them. It is 411 to 479 words long and takes all six direct registers (`o`, `bg`, `col`,
+  `no`, `acc_hi`, `acc_lo`). A page of the ROM has 512 words; 1 to 4 sprites fit with every number of
+  columns and every `XGS_SPRITE_LINES`. The compiler reports it, with the number of words, if a setting does not.
 - The kernel is placed at the start of a page of the ROM (`samepage`), and so is
   `xgs_sprite_update`, so up to about 500 words in front of each can stay empty, which matters
-  if the ROM is nearly full. RAM: `8 + 3 * XGS_SPRITE_ROWS` bytes for a sprite, 8 for the kernel,
-  `columns * rows` for the map.
+  if the ROM is nearly full. RAM: `24 + 3 * XGS_SPRITE_ROWS` bytes for a sprite (16 of them are the shifted
+  bitmap that the update makes, so that the kernel does not have to shift), 8 for the kernel,
+  `columns * rows` for the map. 4 sprites of 3 rows take 132 bytes: the map has to be small
+  (`examples/xgs_sprites.c`: 3 rows of 80 lines, 45 bytes).
 
 `examples/xgs_sprites.c` is a small invaders scene: the formation (one sprite, 5 copies in 3
 rows), a cannon that the joystick moves and a shot that removes a copy from the formation.

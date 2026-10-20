@@ -163,6 +163,7 @@ CompileResult compile(const string& source, const string& fileName, int optimize
 				throw CompileError(0, fileName + ": the program is too big for the ROM (4096 words)");
 			throw CompileError(0, fileName + ": internal error in the generated code: " + error);
 		}
+		result.labels = labels;
 		buildMap(codeInfo, labels, result);
 		if (listing)
 			result.listing = listingText(fileName, source, info, labels, result.rom, result.map);

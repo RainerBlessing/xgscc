@@ -142,6 +142,7 @@ std::vector<size_t> frameStarts(const std::vector<Event>& e) {
 }
 
 int spritePixels = 0;       // the pixels of sprites that the model has in the frame it was asked for
+std::vector<int> spriteShows;   // the pixels of every sprite in that frame (also where another sprite is on top)
 
 // the writes of a line of the picture, from the model
 std::vector<Event> expectedLine(const Scene& s, int line) {
@@ -172,10 +173,12 @@ std::vector<Event> expectedLine(const Scene& s, int line) {
             if (start < 16 && start < s.columns) {
                 mask[start] |= hi;
                 colour[start] = sprColour;
+                spriteShows[u] += __builtin_popcount(hi);
             }
             if (start + 1 < 16 && start + 1 < s.columns) {
                 mask[start + 1] |= lo;
                 colour[start + 1] = sprColour;
+                spriteShows[u] += __builtin_popcount(lo);
             }
         }
     }
@@ -206,6 +209,7 @@ std::vector<Event> expectedLine(const Scene& s, int line) {
 // every line of a frame against the model; returns the number of mistakes (the first ones are reported)
 int checkFrame(const Result& r, const Scene& s, size_t frame) {
     spritePixels = 0;
+    spriteShows.assign(s.sprites.size(), 0);
     std::vector<size_t> frames = frameStarts(r.events);
     EXPECT_GT(frames.size(), frame + 1);
     if (frames.size() <= frame + 1) {
@@ -239,8 +243,8 @@ int checkFrame(const Result& r, const Scene& s, size_t frame) {
 Scene basic() {
     Scene s;
     s.columns = 15;
-    s.rows = 10;
-    s.tileLines = 24;
+    s.rows = 5;                 // a small map: every sprite has 16 bytes of shifted bitmaps in the RAM
+    s.tileLines = 48;
     s.players = 1;
     s.spriteRows = 1;
     s.step = 2;
@@ -253,11 +257,15 @@ Scene basic() {
 
 }  // namespace
 
-void expectScene(const Scene& s) {
+// every sprite has to show at least a pixel in the frame, or the test would pass with a sprite that is not there
+void expectScene(const Scene& s, bool everySpriteShows = false) {
     Result r = run(s, 6);
     ASSERT_TRUE(r.compiled.ok) << r.compiled.error;
     EXPECT_EQ(0, checkFrame(r, s, 3));
     EXPECT_GE(spritePixels, 1) << "the model has no sprite pixel in the frame: the test shows nothing";
+    for (size_t u = 0; everySpriteShows && u < spriteShows.size(); u++) {
+        EXPECT_GT(spriteShows[u], 0) << "the model has no pixel of sprite " << u << ": the test shows nothing of it";
+    }
 }
 
 TEST(SpritesTest, OneSpriteIsDrawnOverTheTiles) {
@@ -387,6 +395,189 @@ TEST(SpritesTest, ThreeSpritesWithEveryNumberOfColumns) {
     }
 }
 
+// four sprites with an image of their own each: they overlap in the cells 2 to 4
+Scene fourSprites() {
+    Scene s = basic();
+    s.rows = 2;                 // a small map: every sprite has 8 + 3 * rows + 16 bytes
+    s.tileLines = 120;
+    s.players = 4;
+    s.images = 4;
+    s.sprites.clear();
+    Sprite a = { 20, 30, 0, std::vector<int>(1, 0x1f) };
+    Sprite b = { 23, 32, 1, std::vector<int>(1, 0x03) };
+    Sprite c = { 27, 34, 2, std::vector<int>(1, 0x05) };
+    Sprite d = { 22, 31, 3, std::vector<int>(1, 0x11) };
+    s.sprites.push_back(a);
+    s.sprites.push_back(b);
+    s.sprites.push_back(c);
+    s.sprites.push_back(d);
+    return s;
+}
+
+TEST(SpritesTest, FourSpritesOverlapAndTheHighestNumberGivesTheColour) {
+    Scene s = fourSprites();
+    expectScene(s, true);
+    s.pixelLines = 4;
+    s.spriteRows = 3;
+    for (size_t i = 0; i < s.sprites.size(); i++) {
+        s.sprites[i].masks = std::vector<int>(3, s.sprites[i].masks[0]);
+        s.sprites[i].y = 12 + 9 * static_cast<int>(i);
+    }
+    expectScene(s, true);
+}
+
+// the shift to x & 7 pixels is made by xgs_sprite_update: every offset, in every sprite
+TEST(SpritesTest, FourSpritesAtEveryPixelOffset) {
+    for (int offset = 0; offset < 8; offset++) {
+        Scene s = fourSprites();
+        for (size_t i = 0; i < s.sprites.size(); i++) {
+            s.sprites[i].x = 8 * (1 + 3 * static_cast<int>(i)) + ((offset + static_cast<int>(i)) & 7);
+            s.sprites[i].y = 20 + 7 * static_cast<int>(i);
+            s.sprites[i].masks[0] = 0x01;
+        }
+        expectScene(s, true);
+    }
+}
+
+TEST(SpritesTest, FourSpritesAtTheEdgesOfThePicture) {
+    Scene s = fourSprites();
+    s.sprites[0].x = 0;
+    s.sprites[0].masks[0] = 0x01;
+    s.sprites[1].x = 8 * s.columns - 1;         // one pixel in the last cell, the rest is cut
+    s.sprites[1].masks[0] = 0x01;
+    s.sprites[1].y = 50;
+    s.sprites[2].x = 3;                          // the copy 7 is in the last cell, the one that follows is not there
+    s.sprites[2].masks[0] = 0x81;
+    s.sprites[2].y = 70;
+    s.sprites[3].x = 8 * (s.columns - 2) + 5;
+    s.sprites[3].masks[0] = 0x01;
+    s.sprites[3].y = 90;
+    expectScene(s, true);
+}
+
+// F made 3 sprites possible with every number of columns, E 4
+TEST(SpritesTest, FourSpritesWithEveryNumberOfColumnsAndLinesPerPixelRow) {
+    for (int lines = 1; lines <= 8; lines *= 2) {
+        for (int columns = 2; columns <= 15; columns++) {
+            Scene s = fourSprites();
+            s.columns = columns;
+            s.pixelLines = lines;
+            for (size_t i = 0; i < s.sprites.size(); i++) {
+                s.sprites[i].x = (3 + 5 * static_cast<int>(i)) % (8 * columns);
+                s.sprites[i].y = 20 + 9 * static_cast<int>(i);
+                s.sprites[i].masks[0] = 0x01;
+            }
+            expectScene(s, true);
+        }
+    }
+}
+
+struct Machine {
+    CompileResult compiled;
+    Recorder recorder;
+    Cpu cpu;
+    Machine() : cpu(&recorder) {}
+};
+
+bool start(Machine& m, const std::string& source) {
+    m.compiled = compile(source, "sprites.c");
+    if (!m.compiled.ok) {
+        return false;
+    }
+    m.cpu.reset();
+    for (size_t i = 0; i < m.compiled.rom.size(); i++) {
+        m.cpu.getROM()[i] = m.compiled.rom[i];
+    }
+    return true;
+}
+
+// The two additions in the sprite routine that have no clrb in front of them need the carry to be 0. The
+// test looks at the carry in front of them in every line of 3 frames, for every sprite row and pixel row of
+// images that start at every pixel offset, also in the lines where a sprite is not (a sprite is 96 lines high).
+TEST(SpritesTest, TheCarryIsZeroWhereTheKernelDependsOnIt) {
+    Scene s = fourSprites();
+    s.spriteRows = 3;
+    s.pixelLines = 4;
+    s.images = 8;
+    for (size_t i = 0; i < s.sprites.size(); i++) {
+        s.sprites[i].masks = std::vector<int>(3, 0x1f);
+        s.sprites[i].x = 8 * static_cast<int>(i) + 3 + 2 * static_cast<int>(i);
+        s.sprites[i].y = 20 + 40 * static_cast<int>(i);
+        s.sprites[i].image = 7 - 2 * static_cast<int>(i);       // the highest images: the largest addresses
+    }
+    s.loop = "  xgs_sprite(0, xgs_sprites[0] + 1, xgs_sprites[1], 7);";
+    Machine m;
+    ASSERT_TRUE(start(m, program(s))) << m.compiled.error;
+    const unsigned address[2] = { static_cast<unsigned>(m.compiled.labels.at("xgs_carry0_a")), static_cast<unsigned>(m.compiled.labels.at("xgs_carry0_b")) };
+    long visits[2] = { 0, 0 };
+    long wrong[2] = { 0, 0 };
+    long carrySet = 0;
+    while (m.cpu.getCycle() < static_cast<unsigned>(XGS_FRAME_CYCLES) * 4) {
+        const unsigned pc = *m.cpu.getPC();
+        const bool carry = m.cpu.getRAM()[3] & 1;
+        carrySet += carry;
+        for (int i = 0; i < 2; i++) {
+            if (pc == address[i]) {
+                visits[i]++;
+                wrong[i] += carry;
+            }
+        }
+        m.cpu.execute();
+    }
+    for (int i = 0; i < 2; i++) {
+        EXPECT_GT(visits[i], 240 * 4 * 2) << "the addition " << i << " is run in every line for every sprite";
+        EXPECT_EQ(0, wrong[i]) << "the carry is set in front of the addition " << i;
+    }
+    EXPECT_GT(carrySet, 0) << "the carry bit is not read from the right place";
+}
+
+// the cycles that xgs_sprite_update needs before it starts to wait for the frame: the time that the game loses
+long updateCycles(const Scene& s, int frames) {
+    Machine m;
+    EXPECT_TRUE(start(m, program(s))) << m.compiled.error;
+    unsigned entry = 0;
+    for (size_t i = 0; i < m.compiled.map.rom.size(); i++) {
+        if (m.compiled.map.rom[i].name == "xgs_sprite_update") {
+            entry = m.compiled.map.rom[i].address;
+        }
+    }
+    const unsigned end = m.compiled.labels.at("xgs_update_end");
+    long longest = 0;
+    long begin = -1;
+    while (m.cpu.getCycle() < static_cast<unsigned>(XGS_FRAME_CYCLES) * frames) {
+        const unsigned pc = *m.cpu.getPC();
+        if (pc == entry) {
+            begin = m.cpu.getCycle();
+        } else if (pc == end && begin >= 0) {
+            longest = std::max(longest, static_cast<long>(m.cpu.getCycle()) - begin);
+            begin = -1;
+        }
+        m.cpu.execute();
+    }
+    return longest;
+}
+
+// 4 sprites of 3 rows of copies, with the images shifted by every offset: the update takes 3 800 to 6 100 cycles
+// of the 92 000 that a picture of 240 lines leaves to the game (the patterns of the copies were 2 900 of them)
+TEST(SpritesTest, TheUpdateOfFourSpritesWithThreeRowsStaysInItsBudget) {
+    long cycles[8];
+    for (int offset = 0; offset < 8; offset++) {
+        Scene s = fourSprites();
+        s.spriteRows = 3;
+        s.pixelLines = 4;
+        for (size_t i = 0; i < s.sprites.size(); i++) {
+            s.sprites[i].masks = std::vector<int>(3, 0x1f);
+            s.sprites[i].x = 8 * static_cast<int>(i) + offset;
+        }
+        cycles[offset] = updateCycles(s, 4);
+    }
+    // the shift takes a round of the loop for every pixel of the offset: an offset of 7 is the longest
+    for (int offset = 1; offset < 8; offset++) {
+        EXPECT_GT(cycles[offset], cycles[offset - 1]) << "offset " << offset;
+    }
+    EXPECT_LT(cycles[7], 6500) << "the update takes " << cycles[7] << " cycles";
+}
+
 TEST(SpritesTest, ASpriteWithoutCopiesIsNotThere) {
     Scene s = basic();
     s.sprites[0].masks[0] = 0;
@@ -427,7 +618,7 @@ TEST(SpritesTest, TheCopiesAreMadeAgainWhenTheMaskChanges) {
     s.sprites[0].y = 20;
     Sprite second = { 8 + 40, 24, 1, std::vector<int>(2, 0x01) };
     s.sprites.push_back(second);
-    const int record = 3 + 3 * 2 + 5;       // x, y, image, 2 masks, 2 patterns, the state of the kernel
+    const int record = xgsSpriteRecord(2);
     s.loop = "  xgs_sprite_copies(1, 1, xgs_sprites[" + number(record + 3 + 1) + "] << 1);";
     Result r = run(s, 9);
     ASSERT_TRUE(r.compiled.ok) << r.compiled.error;
@@ -498,15 +689,45 @@ TEST(SpritesTest, TheExampleRunsAndTheShotFlies) {
     Recorder recorder;
     Cpu cpu(&recorder);
     cpu.reset();
-    *cpu.getJoystrickr() = 0x10;
+    *cpu.getJoystrickr() = 0x18;        // right and fire: the cannon moves and shoots
     for (size_t i = 0; i < compiled.rom.size(); i++) {
         cpu.getROM()[i] = compiled.rom[i];
     }
+    // when the update of the sprites has done its work and the wait for the frame starts: what the game
+    // and the update took is the time up to there from the end of the picture
+    const unsigned waitStarts = compiled.labels.at("xgs_update_end");
+    std::vector<unsigned> waits;
     while (cpu.getCycle() < static_cast<unsigned>(XGS_FRAME_CYCLES) * 12) {
+        if (*cpu.getPC() == waitStarts) {
+            waits.push_back(cpu.getCycle());
+        }
         cpu.execute();
     }
     EXPECT_LT(cpu.getRAM()[compiled.variables.at("shot_y")], 196);
     std::vector<size_t> frames = frameStarts(recorder.events);
     ASSERT_GE(frames.size(), 6u);
     EXPECT_EQ(static_cast<size_t>(240) * (6 + 8 * 15) + 2, frames[4] - frames[3]);
+    // the ground is a bar of 6 lines on the lines 216 to 221 (the map has 3 rows of 80 lines); no sprite is there
+    // in the first cell, its first pixel is the 6th write of a line
+    const size_t perLine = 6 + 8 * 15;
+    const int bar[6] = { 0x0a, 0x0b, 0x0c, 0x0c, 0x0b, 0x0a };
+    for (int line = 214; line < 224; line++) {
+        const int expected = (line >= 216 && line < 222) ? bar[line - 216] : 0xf6;
+        EXPECT_EQ(expected, recorder.events[frames[3] + line * perLine + 5].value) << "line " << line;
+    }
+    // the game and the update take a tenth of the time that a picture of 240 lines leaves (92 473 cycles): the
+    // wait for the frame starts that long before its vertical sync
+    long least = XGS_FRAME_CYCLES;
+    for (size_t k = 2; k + 1 < frames.size(); k++) {
+        const unsigned sync = recorder.events[frames[k] - 1].cycle;     // the start of the vertical sync
+        long before = -1;
+        for (size_t w = 0; w < waits.size(); w++) {
+            if (waits[w] < sync) {
+                before = static_cast<long>(sync) - static_cast<long>(waits[w]);
+            }
+        }
+        ASSERT_GT(before, 0) << "frame " << k;
+        least = std::min(least, before);
+    }
+    EXPECT_GT(least, 92473 - 9300) << "the game and the update take " << 92473 - least << " cycles of the 92 473 that the frame leaves";
 }

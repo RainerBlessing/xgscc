@@ -638,13 +638,16 @@ namespace
 namespace
 {
 	// A record of xgs_sprites, for every sprite: x, y, image * 16, the masks of its rows of copies,
-	// the patterns of the copies of these rows (16 bits each, made by xgs_sprite_update), and
-	// the state of the kernel in a line: pattern (2 bytes), shape of the next cell (2), colour.
+	// the patterns of the copies of these rows (16 bits each, made by xgs_sprite_update), the state of the
+	// kernel in a line (pattern 2 bytes, shape in the cell and in the next one 2, colour), and the 8 pixel
+	// rows of the image shifted to the right by x & 7, 2 bytes each (the cell of x and the next one; made by
+	// xgs_sprite_update, so that the kernel does not shift in the lines).
 	struct SpriteLayout
 	{
 		int masks;
 		int patterns;
 		int state;
+		int shapes;
 		int size;
 	};
 
@@ -654,7 +657,8 @@ namespace
 		layout.masks = 3;
 		layout.patterns = 3 + spriteRows;
 		layout.state = 3 + 3 * spriteRows;
-		layout.size = layout.state + 5;
+		layout.shapes = layout.state + 5;
+		layout.size = layout.shapes + 16;
 		return layout;
 	}
 }
@@ -773,9 +777,6 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.address("xgs_up", 0);
 	sub.ins("mov w, indf");
 	sub.ins("mov fsr, w");
-	sub.ins("mov w, indf");
-	sub.ins("and w, #7");
-	sub.ins("mov " + T + ", w");				// the pixels the bitmap is shifted to the right
 	sub.seek(&at, 1);
 	sub.ins("mov w, " + BG);
 	sub.ins("mov " + NC + ", w");
@@ -784,50 +785,76 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("sub " + NC + ", w");				// the line in the sprite
 	sub.ins("mov w, " + NC);
 	sub.ins("mov " + O + ", w");
-	for (int i = 0; i < pixelShift; i++)
+	// O becomes 2 * the pixel row (a pair of bytes for every row), COL the sprite row. With more than one line
+	// to a pixel row the lines are shifted away one less, which leaves the pixel row doubled; with one line
+	// the row is doubled by rl.
+	for (int i = 0; i < pixelShift - 1; i++)
 	{
 		sub.ins("clrb status.0");
 		sub.ins("rr " + O);
-	}										// the pixel row, with the sprite row above it
-	sub.ins("mov w, " + O);
-	sub.ins("mov " + COL + ", w");
-	sub.ins("mov w, #7");
-	sub.ins("and " + O + ", w");				// the pixel row
-	for (int i = 0; i < 3; i++)
+	}
+	if (pixelShift == 0)
 	{
-		sub.ins("clrb status.0");
-		sub.ins("rr " + COL);
-	}										// the sprite row
+		sub.ins("mov w, " + O);
+		sub.ins("mov " + COL + ", w");
+		sub.ins("mov w, #7");
+		sub.ins("and " + O + ", w");				// the pixel row
+		for (int i = 0; i < 3; i++)
+		{
+			sub.ins("clrb status.0");
+			sub.ins("rr " + COL);
+		}										// the sprite row
+	}
+	else
+	{
+		sub.ins("mov w, " + O);
+		sub.ins("mov " + COL + ", w");
+		sub.ins("mov w, #e");
+		sub.ins("and " + O + ", w");				// 2 * the pixel row
+		sub.ins("swap " + COL);
+		sub.ins("mov w, #f");
+		sub.ins("and " + COL + ", w");			// the sprite row: 4 bits further up
+	}
 	sub.ins("mov w, #" + hexText(height));
 	sub.ins("setb status.0");
 	sub.ins("sub " + NC + ", w");				// no borrow: the line is behind the sprite
 	sub.ins("mov w, #0");
 	sub.skip("sb status.0", "mov w, #ff");
 	sub.ins("mov " + NC + ", w");				// ff if the sprite is in this line, else 0
-	sub.ins("clrb status.0");
-	sub.ins("rl " + O);
+	if (pixelShift == 0)
+	{
+		sub.ins("clrb status.0");
+		sub.ins("rl " + O);						// 2 * the pixel row
+	}
 	sub.seek(&at, 2);
-	sub.ins("mov w, indf");
+	sub.ins("mov w, indf");					// image * 16
+	// Two additions below have no clrb: the carry is 0 there, which xgs_carry0_a and _b let the tests check
+	// (SpritesTest.TheCarryIsZeroWhereTheKernelDependsOnIt). A new instruction in between that changes the
+	// carry needs a clrb in front of the addition.
 	sub.ins("clrb status.0");
-	sub.ins("add " + O + ", w");
+	sub.ins("add w, " + O);					// image * 16 + 2 * pixel row: less than 256, no carry
+	sub.ins("mov " + T + ", w");
 	sub.ins("mov w, #v_xgs_sprite_images_base");
-	sub.ins("clrb status.0");
-	sub.ins("add " + O + ", w");				// the address of the shape in the table
+	sub.label("xgs_carry0_a");
+	sub.ins("add " + T + ", w");				// + the table: the carry is the one of the addition before
+	sub.ins("inc " + T);						// the address of the colour
 	sub.ins("mov m, #v_xgs_sprite_images_page");
-	sub.ins("mov w, " + O);
+	sub.ins("mov w, " + T);
 	sub.ins("iread", 4);
+	sub.ins("mov " + BG + ", w");				// the colour
+	sub.seek(&at, layout.shapes);			// more than 3 away: mov, clrb, add fsr, which leaves the carry 0
+	sub.ins("mov w, " + O);
+	sub.label("xgs_carry0_b");
+	sub.ins("add fsr, w");					// the shifted shape of the pixel row: two bytes
+	sub.ins("mov w, indf");
 	sub.ins("mov " + NO + ", w");
-	sub.ins("inc " + O);
-	sub.ins("mov m, #v_xgs_sprite_images_page");
-	sub.ins("mov w, " + O);
-	sub.ins("iread", 4);
-	sub.ins("mov " + O + ", w");				// the colour
-	sub.ins("mov " + BG + ", w");
-	sub.ins("mov w, " + NC);
-	sub.ins("and " + NO + ", w");				// no sprite in this line: nothing to show
-	sub.seek(&at, layout.state + 4);
-	sub.ins("mov w, " + O);
-	sub.ins("mov indf, w");
+	sub.ins("inc fsr");
+	sub.ins("mov w, indf");
+	sub.ins("mov " + T + ", w");				// outside the sprite the pattern is 0: the shape is not used
+	sub.address("xgs_up", 0);
+	sub.ins("mov w, indf");
+	sub.ins("mov fsr, w");
+	at = 0;
 	sub.seek(&at, layout.patterns);
 	sub.ins("clrb status.0");
 	sub.ins("mov w, <<" + COL);
@@ -853,36 +880,14 @@ string xgsSpriteFrameSource(const SpriteConfig& c)
 	sub.ins("mov w, " + COL);
 	sub.ins("mov indf, w");
 	at = layout.state + 1;
-	// The bitmap goes to the right by T pixels (0 to 7), into the pair of bytes NO:O of this cell and of
-	// the next one, in three steps that each do their part or nothing, in the same cycles: 4 pixels
-	// (the nibbles change places), 2 and 1. {col} is a mask here: ff if the step is done.
-	sub.ins("clr " + O);
-	sub.ins("mov w, #0");
-	sub.skip("snb " + T + ".2", "mov w, #ff");
-	sub.ins("mov " + COL + ", w");
-	sub.skip("snb " + T + ".2", "swap " + NO);
-	sub.ins("mov w, #f0");
-	sub.ins("and w, " + COL);
-	sub.ins("mov " + COL + ", w");				// f0 if the step is done
-	sub.ins("mov w, " + NO);
-	sub.ins("and w, " + COL);
-	sub.ins("mov " + O + ", w");				// the low nibble of the shape, moved up, is in the next cell
-	sub.ins("mov w, /" + COL);
-	sub.ins("and " + NO + ", w");				// and the high nibble stays
-	sub.ins("clrb status.0");
-	sub.skip("snb " + T + ".1", "rr " + NO);
-	sub.skip("snb " + T + ".1", "rr " + O);
-	sub.ins("clrb status.0");
-	sub.skip("snb " + T + ".1", "rr " + NO);
-	sub.skip("snb " + T + ".1", "rr " + O);
-	sub.ins("clrb status.0");
-	sub.skip("snb " + T + ".0", "rr " + NO);
-	sub.skip("snb " + T + ".0", "rr " + O);
 	sub.seek(&at, layout.state + 2);
 	sub.ins("mov w, " + NO);
 	sub.ins("mov indf, w");
 	sub.ins("inc fsr");
-	sub.ins("mov w, " + O);
+	sub.ins("mov w, " + T);
+	sub.ins("mov indf, w");
+	sub.ins("inc fsr");
+	sub.ins("mov w, " + BG);
 	sub.ins("mov indf, w");
 	// the copy that starts in the first cell (bit 0 of the pattern) puts its shape and colour there
 	sub.address("xgs_m0", 0);
@@ -1210,6 +1215,72 @@ string xgsSpriteUpdateSource(const SpriteConfig& c)
 	p.ins("decsz indf");
 	p.jump(row);
 
+	// the 8 pixel rows of the image of the sprite, shifted to the right by x & 7 into two bytes each:
+	// the bytes of the cell of x and of the next one
+	p.address("xgs_r", 0);
+	p.ins("mov w, indf");
+	p.ins("mov fsr, w");
+	p.ins("mov w, indf");
+	p.ins("and w, #7");
+	p.ins("mov " + NC + ", w");			// the pixels to shift
+	p.ins("inc fsr");
+	p.ins("inc fsr");
+	p.ins("mov w, indf");				// image * 16
+	p.ins("mov " + T + ", w");
+	p.ins("mov w, #v_xgs_sprite_images_base");
+	p.ins("clrb status.0");
+	p.ins("add " + T + ", w");			// the address of the first row
+	p.address("xgs_r", 0);
+	p.ins("mov w, indf");
+	p.ins("mov " + BG + ", w");
+	p.ins("mov w, #" + hexText(layout.shapes));
+	p.ins("clrb status.0");
+	p.ins("add w, " + BG);
+	p.ins("mov " + BG + ", w");
+	p.address("xgs_mp", 0);
+	p.ins("mov w, " + BG);
+	p.ins("mov indf, w");				// where the bytes go
+	p.address("xgs_s", 0);
+	p.ins("mov w, #8");
+	p.ins("mov indf, w");
+	string shapeRow = p.newLabel("s");
+	string shiftLoop = p.newLabel("t");
+	string shiftDone = p.newLabel("d");
+	p.label(shapeRow);
+	p.ins("mov m, #v_xgs_sprite_images_page");
+	p.ins("mov w, " + T);
+	p.ins("iread");
+	p.ins("mov " + O + ", w");
+	p.ins("clr " + COL);
+	p.ins("mov w, " + NC);
+	p.ins("mov " + NO + ", w");
+	p.label(shiftLoop);
+	p.ins("mov w, " + NO);
+	p.ins("snb status.2");
+	p.ins("jmp " + shiftDone);
+	p.ins("clrb status.0");
+	p.ins("rr " + O);
+	p.ins("rr " + COL);
+	p.ins("dec " + NO);
+	p.jump(shiftLoop);
+	p.label(shiftDone);
+	p.address("xgs_mp", 0);
+	p.ins("mov w, indf");
+	p.ins("mov fsr, w");
+	p.ins("mov w, " + O);
+	p.ins("mov indf, w");
+	p.ins("inc fsr");
+	p.ins("mov w, " + COL);
+	p.ins("mov indf, w");
+	p.address("xgs_mp", 0);
+	p.ins("inc indf");
+	p.ins("inc indf");
+	p.ins("inc " + T);
+	p.ins("inc " + T);
+	p.address("xgs_s", 0);
+	p.ins("decsz indf");
+	p.jump(shapeRow);
+
 	p.address("xgs_r", 0);
 	p.ins("mov w, #" + hexText(layout.size));
 	p.ins("clrb status.0");
@@ -1220,6 +1291,7 @@ string xgsSpriteUpdateSource(const SpriteConfig& c)
 	// the wraps of the RTCC of the wait for the frame: the kernel only waits for the rest, so it is shorter
 	Kernel waiting(T);
 	waitForFrame(waiting, c.rows * c.tileLines, 1);
+	p.label("xgs_update_end");				// what is done before the wait: the time that the game loses
 	p.raw(waiting.text());
 	p.ins("clrb fsr.7");
 	p.ins("retp", 0);

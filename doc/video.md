@@ -350,22 +350,25 @@ sprite with 5 copies in 3 rows.
   cycles), one for the tile of the next cell and the loop (27 cycles), 1 to set up. So a cell
   takes the 272 cycles, whatever there is to draw: every write of every line is at a cycle that is
   known at build time.
-- The sprite is not drawn pixel by pixel but as bytes: for every line its shape is shifted to the right by
-  `x & 7` into a pair of bytes (the pixels in the cell of `x`, and in the next one), and for every cell
-  the bits of the pattern of the copies (16 bits, a bit for every cell where a copy starts, made from the mask
-  once before the frame) say whether the first byte, the second byte or both of a sprite go into the
-  mask of the next cell. The first cell of a line has no cell in front of it to be made in: the sprite routine
-  puts the shape and colour of a copy that starts there into two bytes of RAM (`xgs_m0`, `xgs_k0`), from
-  which the start of the line takes the first mask. Overlapping sprites in a cell share its colour.
-- The work for the sprites of a line (the line in the sprite, the row of the image with 2 `iread`, the
-  shift in 3 steps of 4, 2 and 1 pixels that do their part or nothing in the same cycles, the pattern of
-  the row of copies) is one routine for all sprites, `xgs_sub`, called from a place for each and left
-  with `retp`: 156 cycles per sprite with 4 lines per pixel row, the call and the return (6 cycles) included.
+- The sprite is not drawn pixel by pixel but as bytes: its shape is shifted to the right by `x & 7` into a pair of
+  bytes (the pixels in the cell of `x`, and in the next one) for each of its 8 pixel rows, **once before the frame**
+  by `xgs_sprite_update` (16 bytes in the record of the sprite). For every cell the bits of the pattern of the copies
+  (16 bits, a bit for every cell where a copy starts, made from the mask at the same time) say whether the first
+  byte, the second byte or both of a sprite go into the mask of the next cell. The first cell of a line has no cell
+  in front of it to be made in: the sprite routine puts the shape and colour of a copy that starts there into
+  two bytes of RAM (`xgs_m0`, `xgs_k0`), from which the start of the line takes the first mask. Overlapping
+  sprites in a cell share its colour. A line of a sprite is outside of the sprite where its pattern is 0, so the
+  shifted bytes of such a line need no mask.
+- The work for the sprites of a line (the line in the sprite, the shifted bytes of the pixel row from the record,
+  the colour of the row of the image with one `iread`, the pattern of the row of copies) is one routine for all
+  sprites, `xgs_sub`, called from a place for each and left with `retp`: 116 to 121 cycles per sprite (1, 2, 4,
+  8 lines per pixel row: 121, 116, 118, 120), the call and the return (6 cycles) included.
   A `call` reaches only the first 256 words of a page (SX book, 1.15.1.3), so the routine is at the
   start of the kernel, behind a `jmp` that skips it. It runs in the stretches of the start of a line that
   are free (118, 374, 46, 198, 123 cycles between the sync, burst and porch writes), and the
-  generator puts the sprites there where they fit: 3 is what fits (a 4th one needs a routine of
-  at most about 124 cycles: three of them in the stretch of 374 cycles, the fourth in the one of 198).
+  generator puts the sprites there where they fit: three of them in the stretch of 374 cycles (3 * 121 = 363),
+  the fourth in the one of 198. Two additions in it have no `clrb status.0` in front (there is no cycle left for it;
+  the carry is 0 there); `SpritesTest.TheCarryIsZeroWhereTheKernelDependsOnIt` looks at the carry in front of both.
 - The generator counts every instruction (class `Piece`) and pads with delays to the planned
   cycle; a configuration that does not fit is an error of the compiler with the number of cycles.
 
@@ -373,28 +376,30 @@ sprite with 5 copies in 3 rows.
 
 | | |
 |---|---|
-| kernel | 438 words for 1 sprite, 461 for 2, 484 for 3 (1 row of copies, 1 line per pixel row; 488 for the example: 3 rows, 4 lines); a page has 512 |
-| RAM | `8 + 3 * rows` bytes per sprite, 8 for the kernel |
-| time before the frame | 357 cycles (1 sprite), 799 (3, 1 row), 2155 (3, 3 rows), 3511 (3, 5 rows) for the patterns of the copies, inside the time of the game; the rest of the wait for the frame is done by the same routine (the wraps of the RTCC), the kernel does the last part, which makes it shorter |
+| kernel | 411 words for 1 sprite, 435 for 2, 455 for 3, 479 for 4 (1 row of copies, 1 line per pixel row; 455 for the example: 3 sprites, 3 rows, 4 lines); a page has 512 |
+| RAM | `24 + 3 * rows` bytes per sprite (16 of them the shifted bitmap), 8 for the kernel |
+| time before the frame | `xgs_sprite_update` makes the patterns of the copies and the shifted bitmaps, inside the time of the game, before the wait for the frame: 540 to 1 100 cycles (1 sprite, 1 row; the offset `x & 7` 0 to 7), 2 800 to 4 500 (3 sprites, 3 rows), 3 800 to 6 100 (4 sprites, 3 rows), 5 400 to 7 700 (4 sprites, 5 rows). The example (3 sprites, a joystick that moves and shoots, collisions) leaves 88 100 of the 92 473 cycles that 240 lines leave: game and update take 4 300 (`SpritesTest.TheExampleRunsAndTheShotFlies`). The rest of the wait for the frame is done by the same routine (the wraps of the RTCC), the kernel does the last part, which makes it shorter |
 | frame | 1 330 956 cycles ±5 and the vertical sync of 19 283 cycles, like the tile kernel (checked in the tests) |
 
-With 1 to 3 sprites every number of columns (2 to 15) and every number of lines per pixel row fits (checked by
-`SpritesTest.ThreeSpritesWithEveryNumberOfColumns`; before the sprite routine was called with `call` and `retp`
-instead of a number of the sprite in RAM and a chain of tests, 3 sprites needed 13 to 15 columns). The kernel and
-`xgs_sprite_update` each begin on a page of the ROM (`samepage`), which can leave up to about 500 words in front of
-them unused.
+With 1 to 4 sprites every number of columns (2 to 15) and every number of lines per pixel row fits (checked by
+`SpritesTest.FourSpritesWithEveryNumberOfColumnsAndLinesPerPixelRow`). The history: the routine was entered with
+a `jmp` and left through a chain of tests (167 to 176 cycles a sprite, 3 sprites needed 13 to 15 columns); `call` and
+`retp` made it 156 cycles; the shift in the line (30 cycles) became the shifted bitmap of the update, which, with a
+cheaper computation of the pixel row, made the 4th sprite fit. The price is 16 bytes of RAM for every sprite.
+The kernel and `xgs_sprite_update` each begin on a page of the ROM (`samepage`), which can leave up to about 500
+words in front of them unused.
 
 ### Test
 
 `tests/sprites_test.cpp` runs programs on the emulated SX52 and compares **every write to RE of a frame**,
 value and cycle, with a model of the picture that is written separately: the tile map, the image tables, and
 for every line the copies, the shift, the pixel rows (1 to 8 lines), the rows of copies, the priority of
-up to 3 sprites, the edges of the picture (also the cell on the left and the top, where a sprite that is below the picture comes in again). It also moves a sprite and changes
+up to 4 sprites, the edges of the picture (also the cell on the left and the top, where a sprite that is below the picture comes in again). It also moves a sprite and changes
 a mask from frame to frame, and checks that errors of the setup are said.
 
 ### Not done
 
-More than 3 sprites (another 156 cycles per sprite do not fit before the first cell), shots and bombs as
+More than 4 sprites (a fifth routine of 116 to 121 cycles does not fit what is left of the stretches), shots and bombs as
 cheaper objects, a colour for every pixel (the colour is one per
 row of the image and cell), collision in the kernel (the C code can compare the positions), a
 combination with the hi-res tiles.
