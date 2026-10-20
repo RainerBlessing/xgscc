@@ -6,7 +6,7 @@
 //
 //   left, right  move the cannon      fire  shoots (one shot at a time)
 //   every 32 frames an invader drops a bomb on the cannon (the lowest one of the copy that is nearest to it);
-//   when a bomb hits the cannon the invaders start again
+//   when a bomb hits the cannon, or the last invader is hit, the invaders start again
 //
 // Sound, the setup of Rem Pac: channel 1 is a square wave with a fast envelope (shot, hit of an invader, hit of
 // the cannon), channel 2 a sine wave with a slow one (the march of the invaders: 4 notes, one every 16 frames).
@@ -87,6 +87,7 @@ uint8_t shot_y;             // 0: no shot
 uint8_t bomb_x;
 uint8_t bomb_y;             // 0: no bomb
 uint8_t hits;               // how often the cannon was hit
+uint8_t rounds;             // how often all invaders were hit
 
 void shoot(void)
 {
@@ -190,6 +191,11 @@ void main(void)
                 shot_y = 0;
             } else {
                 shoot();
+                if ((xgs_sprites[3] | xgs_sprites[4] | xgs_sprites[5]) == 0) {      // the masks of the rows
+                    rounds++;
+                    start_formation();
+                    xgs_sprite(ALIENS, alien_x, alien_y, IMAGE_ALIEN_A);
+                }
             }
         }
         if (shot_y) {

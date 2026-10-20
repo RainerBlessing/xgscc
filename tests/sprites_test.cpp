@@ -900,3 +900,55 @@ TEST(SpritesTest, TheExamplePlaysItsSounds) {
     EXPECT_EQ(cpu.getRAM()[compiled.variables.at("hits")], cannonHits) << "a note for every hit of the cannon";
     EXPECT_GE(cannonHits, 1);
 }
+
+// examples/xgs_sprites.c: when the last invader is hit the game starts again (all invaders, the first place). Only one
+// invader is left to the shots (a poke after every hit of the cannon, which starts the invaders again, too).
+TEST(SpritesTest, TheGameStartsAgainWhenTheLastInvaderIsHit) {
+    std::ifstream file(EXAMPLES_DIR "/xgs_sprites.c");
+    std::stringstream text;
+    text << file.rdbuf();
+    CompileResult compiled = compile(text.str(), "xgs_sprites.c");
+    ASSERT_TRUE(compiled.ok) << compiled.error;
+    Recorder recorder;
+    Cpu cpu(&recorder);
+    cpu.reset();
+    *cpu.getJoystrickr() = 0x10;        // fire, the cannon stands still
+    for (size_t i = 0; i < compiled.rom.size(); i++) {
+        cpu.getROM()[i] = compiled.rom[i];
+    }
+    unsigned char* ram = cpu.getRAM();
+    const int masks = compiled.variables.at("xgs_sprites") + 3;
+    const int rounds = compiled.variables.at("rounds");
+    const int hits = compiled.variables.at("hits");
+    const unsigned frameDone = compiled.labels.at("xgs_update_end");
+    int lastHits = -1;
+    int before[3] = { 0, 0, 0 };            // the masks in the frame before
+    long frames = 0;
+    while (frames < 1500 && ram[rounds] == 0) {
+        if (*cpu.getPC() == frameDone) {
+            frames++;
+            if (ram[hits] != lastHits) {
+                lastHits = ram[hits];
+                ram[masks] = 0;
+                ram[masks + 1] = 0;
+                ram[masks + 2] = 0x04;      // the copy 2 of the lowest row: the shot from x = 56 reaches it
+            }
+            for (int row = 0; row < 3; row++) {
+                before[row] = ram[masks + row];
+            }
+        }
+        cpu.execute();
+    }
+    ASSERT_EQ(1, ram[rounds]) << "the last invader is hit in " << frames << " frames";
+    EXPECT_EQ(0x04, before[2]) << "it was the last one";
+    EXPECT_EQ(0, before[0] | before[1]);
+    // at the frame in which it happened (the game of that frame has run; the formation may have stepped once)
+    while (*cpu.getPC() != frameDone) {
+        cpu.execute();
+    }
+    for (int row = 0; row < 3; row++) {
+        EXPECT_EQ(0x1f, ram[masks + row]) << "row " << row << ": all invaders are there again";
+    }
+    EXPECT_LE(ram[compiled.variables.at("alien_x")], 18);
+    EXPECT_EQ(12, ram[compiled.variables.at("alien_y")]);
+}
